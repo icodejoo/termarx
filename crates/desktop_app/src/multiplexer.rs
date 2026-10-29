@@ -35,7 +35,9 @@ pub(crate) fn initialize(config: &AppConfig, cx: &mut App) -> Result<(), String>
     if cx.try_global::<AppSessions>().is_some() {
         return Ok(());
     }
-    if !config.multiplexer_enabled {
+    // 测试进程的 current_exe 是测试程序而不是应用，不能当宿主拉起；
+    // 需要宿主的测试会先用 install_for_test 装好客户端。
+    if !config.multiplexer_enabled || cfg!(test) {
         cx.set_global(AppSessions(None));
         return Ok(());
     }

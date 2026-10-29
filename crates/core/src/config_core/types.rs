@@ -454,7 +454,7 @@ impl Default for AppConfig {
             language: AppLanguage::default(),
             chrome_contrast: false,
             auto_update: true,
-            multiplexer_enabled: false,
+            multiplexer_enabled: true,
             tmux_enabled: DEFAULT_TMUX_ENABLED,
             tmux_persistence: DEFAULT_TMUX_PERSISTENCE,
             tmux_exclusive: DEFAULT_TMUX_EXCLUSIVE,

@@ -10,9 +10,12 @@ use termy_core::multiplexer::SessionClient;
 const PREFIX: &str = "terminal_view::multiplexer_session::tests::";
 
 #[gpui_kit::test]
-fn multiplexer_is_off_by_default_and_config_changes_require_restart(cx: &mut TestAppContext) {
-    let mut config = AppConfig::default();
-    assert!(!config.multiplexer_enabled);
+fn multiplexer_is_on_by_default_and_config_changes_require_restart(cx: &mut TestAppContext) {
+    assert!(AppConfig::default().multiplexer_enabled);
+    let mut config = AppConfig {
+        multiplexer_enabled: false,
+        ..AppConfig::default()
+    };
     cx.update(|cx| {
         crate::multiplexer::initialize(&config, cx).unwrap();
         assert!(!crate::multiplexer::enabled(cx));

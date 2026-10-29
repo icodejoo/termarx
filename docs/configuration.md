@@ -93,7 +93,7 @@ Platform note: the Agent Sidebar/Workspace is currently unavailable on Windows b
 ## Terminal
 
 `multiplexer_enabled`
-- Default: `false`
+- Default: `true`
 - Keep programs running after quitting and restore tabs, panes, and terminal state when reopening. Applies after restarting Termarx.
 - Group: `SESSIONS`
 

@@ -16,7 +16,7 @@ chrome_contrast = false
 # Enable automatic update checks
 auto_update = true
 # Keep programs running after quitting and restore tabs, panes, and terminal state when reopening. Applies after restarting Termarx.
-multiplexer_enabled = false
+multiplexer_enabled = true
 # Enable tmux runtime integration
 tmux_enabled = false
 # Reuse tmux tabs and panes across app restarts

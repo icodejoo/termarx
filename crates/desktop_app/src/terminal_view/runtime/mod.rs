@@ -308,6 +308,7 @@ mod tests {
     fn startup_capability_matches_windows_tmux_configuration() {
         let mut config = AppConfig {
             tmux_enabled: true,
+            multiplexer_enabled: false,
             ..AppConfig::default()
         };
         assert!(!tmux_runtime_requested(&config));

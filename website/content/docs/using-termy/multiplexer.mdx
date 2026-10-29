@@ -3,13 +3,13 @@ title: Built-in multiplexer
 description: Keep programs running when Termarx closes and restore your windows, tabs, and panes.
 ---
 
-Enable **Built-in Multiplexer** in **Settings → Terminal → Sessions**, then restart Termarx. You can also set it in your config file:
+**Built-in Multiplexer** is on by default. To turn it off, use **Settings → Terminal → Sessions** and restart Termarx, or set it in your config file:
 
 ```txt
-multiplexer_enabled = true
+multiplexer_enabled = false
 ```
 
-It is off by default. No tmux installation or session commands are needed.
+Existing config files that already contain `multiplexer_enabled = false` keep that value. No tmux installation or session commands are needed.
 
 ## Quit and return
 
