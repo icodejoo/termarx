@@ -478,6 +478,31 @@ impl TerminalView {
         true
     }
 
+    /// 指定窗格在某个方向上是否有可交换的相邻窗格（仅原生运行时支持）。
+    pub(in super::super) fn can_move_pane_in_direction(
+        &self,
+        pane_id: &str,
+        direction: NativeFocusDirection,
+    ) -> bool {
+        self.runtime_kind() == RuntimeKind::Native
+            && self.native_neighbor_pane_id(pane_id, direction).is_some()
+    }
+
+    /// 把窗格和它某个方向上的相邻窗格交换位置，焦点跟随被移动的窗格。
+    ///
+    /// 返回值：是否发生了交换；该方向没有相邻窗格时为 `false`。
+    pub(in super::super) fn move_pane_in_direction(
+        &mut self,
+        pane_id: &str,
+        direction: NativeFocusDirection,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(target_id) = self.native_neighbor_pane_id(pane_id, direction) else {
+            return false;
+        };
+        self.apply_pane_move(pane_id, target_id.as_str(), PaneDropRegion::Center, cx)
+    }
+
     fn apply_pane_move_to_tab(
         &mut self,
         source_pane_id: &str,

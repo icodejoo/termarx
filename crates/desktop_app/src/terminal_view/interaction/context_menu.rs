@@ -10,6 +10,19 @@ pub(in crate::terminal_view) struct TerminalContextMenuState {
     pub(in crate::terminal_view) selected_text: Option<String>,
     pub(in crate::terminal_view) can_copy: bool,
     pub(in crate::terminal_view) can_paste: bool,
+    /// 从窗格标题栏的下拉按钮打开时，记录目标窗格 id；菜单会多出针对它的操作项。
+    pub(in crate::terminal_view) pane_actions_for: Option<String>,
+}
+
+/// 窗格下拉菜单里针对窗格的操作。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(in crate::terminal_view) enum PaneMenuAction {
+    /// 发送 Ctrl+C 中断前台任务。
+    Interrupt,
+    /// 强制结束 shell 下的全部子进程。
+    ForceStop,
+    /// 和指定方向的相邻窗格交换位置。
+    Move(NativeFocusDirection),
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -323,6 +336,53 @@ impl TerminalView {
         }
     }
 
+    /// 从窗格标题栏的下拉按钮打开窗格菜单：先激活该窗格，再弹出带窗格操作项的菜单。
+    ///
+    /// - `pane_id`：被点击的窗格。
+    /// - `position`：按钮点击位置（窗口坐标），菜单从这里展开。
+    pub(in super::super) fn open_pane_menu_from_button(
+        &mut self,
+        pane_id: &str,
+        position: gpui_kit::Point<Pixels>,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.is_active_pane_id(pane_id) {
+            let _ = self.focus_pane_target(pane_id, cx);
+        }
+        self.open_terminal_context_menu(position, cx);
+        if let Some(state) = self.terminal_context_menu.as_mut() {
+            state.pane_actions_for = Some(pane_id.to_string());
+            self.notify_overlay(cx);
+        }
+    }
+
+    /// 执行窗格菜单项：先关菜单，再对菜单记录的目标窗格生效。
+    pub(in super::super) fn execute_pane_menu_action(
+        &mut self,
+        action: PaneMenuAction,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(pane_id) = self
+            .terminal_context_menu
+            .as_ref()
+            .and_then(|state| state.pane_actions_for.clone())
+        else {
+            return;
+        };
+        let _ = self.close_terminal_context_menu(cx);
+        match action {
+            PaneMenuAction::Interrupt => {
+                self.interrupt_pane_task(pane_id.as_str());
+            }
+            PaneMenuAction::ForceStop => {
+                self.force_stop_pane_task(pane_id.as_str());
+            }
+            PaneMenuAction::Move(direction) => {
+                self.move_pane_in_direction(pane_id.as_str(), direction, cx);
+            }
+        }
+    }
+
     pub(in super::super) fn open_terminal_context_menu_for_window(
         &mut self,
         position: gpui_kit::Point<Pixels>,
@@ -362,6 +422,7 @@ impl TerminalView {
             selected_text,
             can_copy,
             can_paste,
+            pane_actions_for: None,
         };
         #[cfg(not(target_os = "macos"))]
         let state_changed = self.terminal_context_menu.as_ref() != Some(&state);

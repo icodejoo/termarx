@@ -92,6 +92,7 @@ mod surface;
 mod tab_colors;
 pub(crate) mod tab_strip;
 mod tabs;
+use tabs::NativeFocusDirection;
 mod titles;
 mod update_overlay;
 mod update_toasts;
@@ -122,9 +123,9 @@ use command_palette::{
 use constants::*;
 use inline_input::{InlineInputAlignment, InlineInputState};
 use interaction::{
-    HoveredLink, MouseReportTargetCell, MouseReportingState, PaneDropRegion, PaneMoveDragState,
-    PaneMoveDropTarget, PaneMoveHandleDrag, PendingCursorMoveClick, PendingCursorMovePreview,
-    PendingKeyRelease, TabContextMenuState, TerminalContextMenuState,
+    HoveredLink, MouseReportTargetCell, MouseReportingState, PaneDropRegion, PaneMenuAction,
+    PaneMoveDragState, PaneMoveDropTarget, PaneMoveHandleDrag, PendingCursorMoveClick,
+    PendingCursorMovePreview, PendingKeyRelease, TabContextMenuState, TerminalContextMenuState,
     kitty_graphics_placement_bounds, kitty_graphics_placement_intersects_selection,
 };
 #[cfg(target_os = "macos")]

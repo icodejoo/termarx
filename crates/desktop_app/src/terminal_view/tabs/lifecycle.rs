@@ -33,7 +33,7 @@ enum NativeSplitAxis {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum NativeFocusDirection {
+pub(in crate::terminal_view) enum NativeFocusDirection {
     Left,
     Right,
     Up,
@@ -2134,15 +2134,23 @@ impl TerminalView {
         direction: NativeFocusDirection,
         cx: &mut Context<Self>,
     ) -> bool {
-        let Some(tab) = self.session.tabs.get(self.session.active_tab) else {
+        let Some(active_id) = self.active_pane_id().map(str::to_string) else {
             return false;
         };
-        let Some(active_index) = tab.active_pane_index() else {
+        let Some(pane_id) = self.native_neighbor_pane_id(active_id.as_str(), direction) else {
             return false;
         };
-        let Some(active) = tab.panes.get(active_index) else {
-            return false;
-        };
+        self.native_focus_pane_target(pane_id.as_str(), cx)
+    }
+
+    /// 在当前标签页里找 `from_pane_id` 指定方向上最近的相邻窗格，没有则返回 `None`。
+    pub(in crate::terminal_view) fn native_neighbor_pane_id(
+        &self,
+        from_pane_id: &str,
+        direction: NativeFocusDirection,
+    ) -> Option<String> {
+        let tab = self.session.tabs.get(self.session.active_tab)?;
+        let active = tab.panes.iter().find(|pane| pane.id == from_pane_id)?;
 
         let active_left = active.left;
         let active_top = active.top;
@@ -2220,10 +2228,7 @@ impl TerminalView {
             }
         }
 
-        let Some((_, _, pane_id)) = best else {
-            return false;
-        };
-        self.native_focus_pane_target(pane_id.as_str(), cx)
+        best.map(|(_, _, pane_id)| pane_id)
     }
 }
 

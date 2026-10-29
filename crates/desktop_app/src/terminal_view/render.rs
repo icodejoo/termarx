@@ -2001,9 +2001,20 @@ impl TerminalView {
                 } else {
                     0.0
                 } + if state.image.is_some() { 1.0 } else { 0.0 }
-                    + plugin_commands.len() as f32;
-            let content_height =
-                row_height * row_count + 8.0 + if plugin_commands.is_empty() { 0.0 } else { 7.0 };
+                    + plugin_commands.len() as f32
+                    + if state.pane_actions_for.is_some() {
+                        PANE_MENU_ACTION_ROWS
+                    } else {
+                        0.0
+                    };
+            let content_height = row_height * row_count
+                + 8.0
+                + if plugin_commands.is_empty() { 0.0 } else { 7.0 }
+                + if state.pane_actions_for.is_some() {
+                    PANE_MENU_ACTION_DIVIDERS * 7.0
+                } else {
+                    0.0
+                };
             let menu_height = context_menu_visible_height(
                 content_height,
                 self.last_viewport_size_px.map(|(_, height)| height as f32),
@@ -2143,6 +2154,45 @@ impl TerminalView {
                     .child(t!("Close Pane"))
                     .into_any_element()
             };
+            // 窗格操作项（停止任务 / 移动窗格）：不可用时置灰。
+            let pane_action_item =
+                |id: &'static str, label: &'static str, enabled: bool, action: PaneMenuAction| {
+                    let text_color = if enabled { text_active } else { text_disabled };
+                    div()
+                        .id(id)
+                        .h(px(row_height))
+                        .px(px(10.0))
+                        .flex()
+                        .items_center()
+                        .overflow_hidden()
+                        .whitespace_nowrap()
+                        .text_ellipsis()
+                        .text_size(px(13.0))
+                        .text_color(text_color)
+                        .when(enabled, |s| s.cursor_pointer())
+                        .when(enabled, |s| s.hover(|style| style.bg(hover_bg)))
+                        .when(enabled, |s| {
+                            s.on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(move |view, _event: &MouseDownEvent, _window, cx| {
+                                    view.execute_pane_menu_action(action, cx);
+                                    cx.stop_propagation();
+                                }),
+                            )
+                        })
+                        .child(label)
+                        .into_any_element()
+                };
+            // 上 / 下 / 左 / 右四个方向是否有可交换的相邻窗格。
+            let pane_move_enabled = state.pane_actions_for.as_deref().map(|pane_id| {
+                [
+                    NativeFocusDirection::Up,
+                    NativeFocusDirection::Down,
+                    NativeFocusDirection::Left,
+                    NativeFocusDirection::Right,
+                ]
+                .map(|direction| self.can_move_pane_in_direction(pane_id, direction))
+            });
             let copy_image_item = || {
                 div()
                     .id("terminal-context-menu-copy-image")
@@ -2286,6 +2336,49 @@ impl TerminalView {
                             .child(open_search_item())
                             .child(rename_pane_item())
                             .child(close_pane_item())
+                            .when_some(pane_move_enabled, |panel, [up, down, left, right]| {
+                                let divider =
+                                    || div().h(px(1.0)).my(px(3.0)).mx(px(8.0)).bg(panel_border);
+                                panel
+                                    .child(divider())
+                                    .child(pane_action_item(
+                                        "terminal-context-menu-stop-task",
+                                        t!("Stop Task"),
+                                        true,
+                                        PaneMenuAction::Interrupt,
+                                    ))
+                                    .child(pane_action_item(
+                                        "terminal-context-menu-force-stop-task",
+                                        t!("Force Stop Task"),
+                                        true,
+                                        PaneMenuAction::ForceStop,
+                                    ))
+                                    .child(divider())
+                                    .child(pane_action_item(
+                                        "terminal-context-menu-move-up",
+                                        t!("Move Pane Up"),
+                                        up,
+                                        PaneMenuAction::Move(NativeFocusDirection::Up),
+                                    ))
+                                    .child(pane_action_item(
+                                        "terminal-context-menu-move-down",
+                                        t!("Move Pane Down"),
+                                        down,
+                                        PaneMenuAction::Move(NativeFocusDirection::Down),
+                                    ))
+                                    .child(pane_action_item(
+                                        "terminal-context-menu-move-left",
+                                        t!("Move Pane Left"),
+                                        left,
+                                        PaneMenuAction::Move(NativeFocusDirection::Left),
+                                    ))
+                                    .child(pane_action_item(
+                                        "terminal-context-menu-move-right",
+                                        t!("Move Pane Right"),
+                                        right,
+                                        PaneMenuAction::Move(NativeFocusDirection::Right),
+                                    ))
+                            })
                             .when(!plugin_commands.is_empty(), |panel| {
                                 panel.child(
                                     div().h(px(1.0)).my(px(3.0)).mx(px(8.0)).bg(panel_border),
@@ -3619,10 +3712,10 @@ impl Render for TerminalView {
                         let label_top = (pane_frame_top - PANE_TITLE_HEIGHT * 0.5).max(0.0);
                         // 过长时压缩中段、保留开头和最后一层目录（同标签页标题的规则）。
                         // 宽度按显示列数估算（CJK 全角占 2 列），溢出部分不再处理。
-                        let fit_text = |text: &str| {
+                        let fit_text = |text: &str, max_width: f32| {
                             TerminalView::format_tab_label_for_render_measured(
                                 text,
-                                side_max_width - PANE_TITLE_PADDING_X * 2.0,
+                                max_width - PANE_TITLE_PADDING_X * 2.0,
                                 &mut |text| {
                                     unicode_width::UnicodeWidthStr::width(text) as f32
                                         * PANE_TITLE_FONT_SIZE
@@ -3635,7 +3728,7 @@ impl Render for TerminalView {
                         let mut title_rgba = blend_rgb_only(colors.cursor, colors.foreground, 0.32);
                         title_rgba.a = self.scaled_chrome_alpha(PANE_TITLE_TITLE_ALPHA);
                         let title_color: gpui_kit::Hsla = title_rgba.into();
-                        let left_text = fit_text(&label_texts.left);
+                        let left_text = fit_text(&label_texts.left, side_max_width);
                         if !left_text.is_empty() {
                             pane_title_labels.push(
                                 div()
@@ -3650,7 +3743,9 @@ impl Render for TerminalView {
                         if let Some(path) = label_texts.right.as_deref() {
                             let mut path_color = colors.foreground;
                             path_color.a = self.scaled_chrome_alpha(PANE_TITLE_PATH_ALPHA);
-                            let path_text = fit_text(path);
+                            // 右段让出下拉按钮的位置。
+                            let path_max_width = side_max_width - PANE_MENU_BUTTON_WIDTH;
+                            let path_text = fit_text(path, path_max_width);
                             if !path_text.is_empty() {
                                 // 右段靠右对齐：容器占满右半区，文字块贴右端。
                                 pane_title_labels.push(
@@ -3660,7 +3755,7 @@ impl Render for TerminalView {
                                             - PANE_TITLE_INSET
                                             - side_max_width))
                                         .top(px(label_top))
-                                        .w(px(side_max_width))
+                                        .w(px(path_max_width))
                                         .flex()
                                         .justify_end()
                                         .child(pane_label_chip(
@@ -3672,6 +3767,54 @@ impl Render for TerminalView {
                                 );
                             }
                         }
+                    }
+
+                    // 标题栏最右端的下拉小三角：点击弹出针对该窗格的菜单（复用右键菜单并追加窗格操作）。
+                    if side_max_width >= PANE_MENU_BUTTON_WIDTH {
+                        let mut button_bg = colors.background;
+                        button_bg.a = 1.0;
+                        let mut arrow_rgba = colors.foreground;
+                        arrow_rgba.a = self.scaled_chrome_alpha(PANE_TITLE_PATH_ALPHA);
+                        let mut arrow_hover_rgba = colors.foreground;
+                        arrow_hover_rgba.a = self.scaled_chrome_alpha(PANE_TITLE_TITLE_ALPHA);
+                        let arrow: gpui_kit::Hsla = arrow_rgba.into();
+                        let arrow_hover: gpui_kit::Hsla = arrow_hover_rgba.into();
+                        let menu_pane_id = pane.id.clone();
+                        pane_title_labels.push(
+                            div()
+                                .id(SharedString::from(format!("pane-menu-button-{}", pane.id)))
+                                .absolute()
+                                .left(px(pane_frame_left + pane_frame_width
+                                    - PANE_TITLE_INSET
+                                    - PANE_MENU_BUTTON_WIDTH))
+                                .top(px((pane_frame_top - PANE_TITLE_HEIGHT * 0.5).max(0.0)))
+                                .w(px(PANE_MENU_BUTTON_WIDTH))
+                                .h(px(PANE_TITLE_HEIGHT))
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .bg(button_bg)
+                                .text_size(px(PANE_TITLE_FONT_SIZE))
+                                .text_color(arrow)
+                                .cursor_pointer()
+                                .hover(move |style| style.text_color(arrow_hover))
+                                .block_mouse_except_scroll()
+                                .on_mouse_down(
+                                    MouseButton::Left,
+                                    cx.listener(
+                                        move |view, event: &MouseDownEvent, _window, cx| {
+                                            view.open_pane_menu_from_button(
+                                                menu_pane_id.as_str(),
+                                                event.position,
+                                                cx,
+                                            );
+                                            cx.stop_propagation();
+                                        },
+                                    ),
+                                )
+                                .child("\u{25BE}")
+                                .into_any_element(),
+                        );
                     }
                 }
 
