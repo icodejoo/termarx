@@ -54,6 +54,8 @@ pub enum ContextMenuAction {
     Paste,
     OpenSearch,
     CopyBufferPosition,
+    CopyCwd,
+    CopyBranch,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -84,6 +86,8 @@ const CONTEXT_MENU_PASTE_ID: i32 = 2;
 const CONTEXT_MENU_OPEN_SEARCH_ID: i32 = 3;
 const CONTEXT_MENU_COPY_BUFFER_POSITION_ID: i32 = 4;
 const CONTEXT_MENU_COPY_IMAGE_ID: i32 = 5;
+const CONTEXT_MENU_COPY_CWD_ID: i32 = 6;
+const CONTEXT_MENU_COPY_BRANCH_ID: i32 = 7;
 const TAB_CONTEXT_MENU_PIN_ID: i32 = 101;
 const TAB_CONTEXT_MENU_UNPIN_ID: i32 = 102;
 const TAB_CONTEXT_MENU_RENAME_ID: i32 = 103;
@@ -99,6 +103,8 @@ fn context_menu_action_for_id(action_id: i32) -> Option<ContextMenuAction> {
         CONTEXT_MENU_PASTE_ID => Some(ContextMenuAction::Paste),
         CONTEXT_MENU_OPEN_SEARCH_ID => Some(ContextMenuAction::OpenSearch),
         CONTEXT_MENU_COPY_BUFFER_POSITION_ID => Some(ContextMenuAction::CopyBufferPosition),
+        CONTEXT_MENU_COPY_CWD_ID => Some(ContextMenuAction::CopyCwd),
+        CONTEXT_MENU_COPY_BRANCH_ID => Some(ContextMenuAction::CopyBranch),
         _ => None,
     }
 }
@@ -373,13 +379,20 @@ pub fn show_alert(title: &str, message: &str) {
     }
 }
 
+/// 弹出终端右键菜单，返回用户选中的动作。
+///
+/// - `pane_copy`：从窗格下拉按钮打开时传 `Some((可复制目录, 可复制分支))`，
+///   菜单末尾追加两项（仅 macOS 原生菜单使用）。
 pub fn show_copy_paste_context_menu(
     buffer_position_label: Option<String>,
     can_copy: bool,
     can_copy_image: bool,
     can_paste: bool,
+    pane_copy: Option<(bool, bool)>,
     anchor: Option<NativeContextMenuAnchor>,
 ) -> Option<ContextMenuAction> {
+    #[cfg(not(target_os = "macos"))]
+    let _ = pane_copy;
     #[cfg(target_os = "macos")]
     {
         fn show_copy_paste_context_menu_on_main(
@@ -388,6 +401,7 @@ pub fn show_copy_paste_context_menu(
             can_copy: bool,
             can_copy_image: bool,
             can_paste: bool,
+            pane_copy: Option<(bool, bool)>,
             anchor: Option<NativeContextMenuAnchor>,
         ) -> Option<ContextMenuAction> {
             let app = NSApplication::sharedApplication(mtm);
@@ -442,6 +456,21 @@ pub fn show_copy_paste_context_menu(
             menu.addItem(&paste_item);
             menu.addItem(&open_search_item);
             menu.addItem(&copy_buffer_position_item);
+            if let Some((can_copy_cwd, can_copy_branch)) = pane_copy {
+                menu.addItem(&NSMenuItem::separatorItem(mtm));
+                menu.addItem(&TermyContextMenuItem::new_with_action_id(
+                    mtm,
+                    t!("Copy Current Directory Path"),
+                    CONTEXT_MENU_COPY_CWD_ID,
+                    can_copy_cwd,
+                ));
+                menu.addItem(&TermyContextMenuItem::new_with_action_id(
+                    mtm,
+                    t!("Copy Current Branch Name"),
+                    CONTEXT_MENU_COPY_BRANCH_ID,
+                    can_copy_branch,
+                ));
+            }
 
             CONTEXT_MENU_SELECTION.store(0, Ordering::Relaxed);
             let _ = pop_up_menu_at_anchor(&menu, anchor);
@@ -456,6 +485,7 @@ pub fn show_copy_paste_context_menu(
                 can_copy,
                 can_copy_image,
                 can_paste,
+                pane_copy,
                 anchor,
             )
         } else {
@@ -466,6 +496,7 @@ pub fn show_copy_paste_context_menu(
                     can_copy,
                     can_copy_image,
                     can_paste,
+                    pane_copy,
                     anchor,
                 )
             })

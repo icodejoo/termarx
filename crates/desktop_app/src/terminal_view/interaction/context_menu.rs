@@ -18,6 +18,10 @@ pub(in crate::terminal_view) struct TerminalContextMenuState {
 #[cfg_attr(target_os = "macos", allow(dead_code))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(in crate::terminal_view) enum PaneMenuAction {
+    /// 复制窗格当前目录路径。
+    CopyCwd,
+    /// 复制窗格当前目录所在的 git 分支名。
+    CopyBranch,
     /// 发送 Ctrl+C 中断前台任务。
     Interrupt,
     /// 强制结束 shell 下的全部子进程。
@@ -77,7 +81,9 @@ impl TerminalView {
             crate::native_sdk::ContextMenuAction::Paste => Some(CommandAction::Paste),
             crate::native_sdk::ContextMenuAction::OpenSearch => Some(CommandAction::OpenSearch),
             crate::native_sdk::ContextMenuAction::CopyImage
-            | crate::native_sdk::ContextMenuAction::CopyBufferPosition => None,
+            | crate::native_sdk::ContextMenuAction::CopyBufferPosition
+            | crate::native_sdk::ContextMenuAction::CopyCwd
+            | crate::native_sdk::ContextMenuAction::CopyBranch => None,
         }
     }
 
@@ -164,6 +170,12 @@ impl TerminalView {
             }
             crate::native_sdk::ContextMenuAction::CopyBufferPosition => {
                 self.execute_terminal_context_menu_copy_buffer_position(cx);
+            }
+            crate::native_sdk::ContextMenuAction::CopyCwd => {
+                self.execute_pane_menu_action(PaneMenuAction::CopyCwd, cx);
+            }
+            crate::native_sdk::ContextMenuAction::CopyBranch => {
+                self.execute_pane_menu_action(PaneMenuAction::CopyBranch, cx);
             }
             _ => {}
         }
@@ -255,6 +267,7 @@ impl TerminalView {
         can_copy: bool,
         can_copy_image: bool,
         can_paste: bool,
+        pane_copy: Option<(bool, bool)>,
         anchor: Option<crate::native_sdk::NativeContextMenuAnchor>,
         cx: &mut Context<Self>,
     ) {
@@ -267,6 +280,7 @@ impl TerminalView {
                         can_copy,
                         can_copy_image,
                         can_paste,
+                        pane_copy,
                         anchor,
                     )
                 })
@@ -317,7 +331,7 @@ impl TerminalView {
         position: gpui_kit::Point<Pixels>,
         cx: &mut Context<Self>,
     ) {
-        self.open_terminal_context_menu_with_native_anchor(position, None, cx);
+        self.open_terminal_context_menu_with_native_anchor(position, None, None, cx);
     }
 
     /// 把窗口坐标处的窗格设为活动窗格（已是活动窗格则不动）。
@@ -352,11 +366,7 @@ impl TerminalView {
         if !self.is_active_pane_id(pane_id) {
             let _ = self.focus_pane_target(pane_id, cx);
         }
-        self.open_terminal_context_menu_for_window(position, window, cx);
-        if let Some(state) = self.terminal_context_menu.as_mut() {
-            state.pane_actions_for = Some(pane_id.to_string());
-            self.notify_overlay(cx);
-        }
+        self.open_terminal_context_menu_for_window(position, Some(pane_id), window, cx);
     }
 
     /// 执行窗格菜单项：先关菜单，再对菜单记录的目标窗格生效。
@@ -375,6 +385,17 @@ impl TerminalView {
         };
         let _ = self.close_terminal_context_menu(cx);
         match action {
+            PaneMenuAction::CopyCwd => {
+                let cwd = self.pane_cwd(pane_id.as_str()).map(str::to_owned);
+                self.copy_pane_text(cwd, t!("Copied directory path"), cx);
+            }
+            PaneMenuAction::CopyBranch => {
+                let branch = self
+                    .pane_cwd(pane_id.as_str())
+                    .and_then(|cwd| self.branch_for_pane_cwd(cwd))
+                    .map(str::to_owned);
+                self.copy_pane_text(branch, t!("Copied branch name"), cx);
+            }
             PaneMenuAction::Interrupt => {
                 self.interrupt_pane_task(pane_id.as_str());
             }
@@ -387,9 +408,25 @@ impl TerminalView {
         }
     }
 
+    /// 把文本写入剪贴板并弹成功提示；文本为空时什么都不做。
+    ///
+    /// - `text`：要复制的内容。
+    /// - `toast`：复制成功后的提示文案。
+    #[cfg_attr(target_os = "macos", allow(dead_code))]
+    fn copy_pane_text(&mut self, text: Option<String>, toast: &str, cx: &mut Context<Self>) {
+        let Some(text) = text.filter(|text| !text.is_empty()) else {
+            return;
+        };
+        cx.write_to_clipboard(ClipboardItem::new_string(text));
+        crate::ui::toast::success(toast);
+        self.notify_overlay(cx);
+    }
+
+    /// 打开终端右键菜单；`pane_id` 为 `Some` 时是窗格下拉菜单，会多出针对该窗格的操作项。
     pub(in super::super) fn open_terminal_context_menu_for_window(
         &mut self,
         position: gpui_kit::Point<Pixels>,
+        pane_id: Option<&str>,
         window: &Window,
         cx: &mut Context<Self>,
     ) {
@@ -401,12 +438,13 @@ impl TerminalView {
             None
         };
 
-        self.open_terminal_context_menu_with_native_anchor(position, native_anchor, cx);
+        self.open_terminal_context_menu_with_native_anchor(position, pane_id, native_anchor, cx);
     }
 
     fn open_terminal_context_menu_with_native_anchor(
         &mut self,
         position: gpui_kit::Point<Pixels>,
+        pane_id: Option<&str>,
         native_anchor: Option<crate::native_sdk::NativeContextMenuAnchor>,
         cx: &mut Context<Self>,
     ) {
@@ -426,8 +464,16 @@ impl TerminalView {
             selected_text,
             can_copy,
             can_paste,
-            pane_actions_for: None,
+            pane_actions_for: pane_id.map(str::to_owned),
         };
+        #[cfg(target_os = "macos")]
+        let pane_copy = pane_id.map(|pane_id| {
+            let cwd = self.pane_cwd(pane_id);
+            (
+                cwd.is_some_and(|cwd| !cwd.is_empty()),
+                cwd.and_then(|cwd| self.branch_for_pane_cwd(cwd)).is_some(),
+            )
+        });
         #[cfg(not(target_os = "macos"))]
         let state_changed = self.terminal_context_menu.as_ref() != Some(&state);
         self.terminal_context_menu = Some(state);
@@ -449,6 +495,7 @@ impl TerminalView {
                 can_copy,
                 can_copy_image,
                 can_paste,
+                pane_copy,
                 native_anchor,
                 cx,
             );

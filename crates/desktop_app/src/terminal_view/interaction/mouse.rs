@@ -1026,7 +1026,7 @@ impl TerminalView {
                 self.kitty_image_selection = image_selection;
                 cx.notify();
             }
-            self.open_terminal_context_menu_for_window(event.position, window, cx);
+            self.open_terminal_context_menu_for_window(event.position, None, window, cx);
             cx.stop_propagation();
             return;
         }

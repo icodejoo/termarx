@@ -134,10 +134,10 @@ pub(super) const PANE_TITLE_PATH_ALPHA: f32 = 0.55;
 pub(super) const PANE_TITLE_CHAR_WIDTH_RATIO: f32 = 0.6;
 /// 窗格标题栏右端下拉按钮的宽度（按钮高度同标题栏）。
 pub(super) const PANE_MENU_BUTTON_WIDTH: f32 = 18.0;
-/// 窗格菜单新增的操作行数：停止任务 2 + 移动窗格 4。
-pub(super) const PANE_MENU_ACTION_ROWS: f32 = 6.0;
+/// 窗格菜单新增的操作行数：复制目录/分支 2 + 停止任务 2 + 移动窗格 4。
+pub(super) const PANE_MENU_ACTION_ROWS: f32 = 8.0;
 /// 窗格菜单新增的分隔线数量。
-pub(super) const PANE_MENU_ACTION_DIVIDERS: f32 = 2.0;
+pub(super) const PANE_MENU_ACTION_DIVIDERS: f32 = 3.0;
 #[cfg(debug_assertions)]
 pub(super) const RENDER_METRICS_LOG_INTERVAL: Duration = Duration::from_secs(1);
 

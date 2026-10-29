@@ -2193,6 +2193,15 @@ impl TerminalView {
                 ]
                 .map(|direction| self.can_move_pane_in_direction(pane_id, direction))
             });
+            // 目录 / 分支是否可复制（没上报目录、非 git 目录时置灰）。
+            let pane_cwd = state
+                .pane_actions_for
+                .as_deref()
+                .and_then(|pane_id| self.pane_cwd(pane_id));
+            let can_copy_cwd = pane_cwd.is_some_and(|cwd| !cwd.is_empty());
+            let can_copy_branch = pane_cwd
+                .and_then(|cwd| self.branch_for_pane_cwd(cwd))
+                .is_some();
             let copy_image_item = || {
                 div()
                     .id("terminal-context-menu-copy-image")
@@ -2340,6 +2349,19 @@ impl TerminalView {
                                 let divider =
                                     || div().h(px(1.0)).my(px(3.0)).mx(px(8.0)).bg(panel_border);
                                 panel
+                                    .child(divider())
+                                    .child(pane_action_item(
+                                        "terminal-context-menu-copy-cwd",
+                                        t!("Copy Current Directory Path"),
+                                        can_copy_cwd,
+                                        PaneMenuAction::CopyCwd,
+                                    ))
+                                    .child(pane_action_item(
+                                        "terminal-context-menu-copy-branch",
+                                        t!("Copy Current Branch Name"),
+                                        can_copy_branch,
+                                        PaneMenuAction::CopyBranch,
+                                    ))
                                     .child(divider())
                                     .child(pane_action_item(
                                         "terminal-context-menu-stop-task",
