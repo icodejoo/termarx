@@ -122,6 +122,8 @@ use command_palette::{
 };
 use constants::*;
 use inline_input::{InlineInputAlignment, InlineInputState};
+// PaneMenuAction 只在非 macOS 的自绘菜单里用到（macOS 走系统原生菜单）。
+#[cfg_attr(target_os = "macos", allow(unused_imports))]
 use interaction::{
     HoveredLink, MouseReportTargetCell, MouseReportingState, PaneDropRegion, PaneMenuAction,
     PaneMoveDragState, PaneMoveDropTarget, PaneMoveHandleDrag, PendingCursorMoveClick,

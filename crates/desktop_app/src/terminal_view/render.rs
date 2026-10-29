@@ -3801,16 +3801,15 @@ impl Render for TerminalView {
                                 .block_mouse_except_scroll()
                                 .on_mouse_down(
                                     MouseButton::Left,
-                                    cx.listener(
-                                        move |view, event: &MouseDownEvent, _window, cx| {
-                                            view.open_pane_menu_from_button(
-                                                menu_pane_id.as_str(),
-                                                event.position,
-                                                cx,
-                                            );
-                                            cx.stop_propagation();
-                                        },
-                                    ),
+                                    cx.listener(move |view, event: &MouseDownEvent, window, cx| {
+                                        view.open_pane_menu_from_button(
+                                            menu_pane_id.as_str(),
+                                            event.position,
+                                            window,
+                                            cx,
+                                        );
+                                        cx.stop_propagation();
+                                    }),
                                 )
                                 .child("\u{25BE}")
                                 .into_any_element(),

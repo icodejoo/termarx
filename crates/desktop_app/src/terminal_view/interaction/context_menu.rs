@@ -14,7 +14,8 @@ pub(in crate::terminal_view) struct TerminalContextMenuState {
     pub(in crate::terminal_view) pane_actions_for: Option<String>,
 }
 
-/// 窗格下拉菜单里针对窗格的操作。
+/// 窗格下拉菜单里针对窗格的操作（macOS 走原生菜单，不会构造）。
+#[cfg_attr(target_os = "macos", allow(dead_code))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(in crate::terminal_view) enum PaneMenuAction {
     /// 发送 Ctrl+C 中断前台任务。
@@ -340,16 +341,18 @@ impl TerminalView {
     ///
     /// - `pane_id`：被点击的窗格。
     /// - `position`：按钮点击位置（窗口坐标），菜单从这里展开。
+    /// - `window`：当前窗口（macOS 原生菜单定位用）。
     pub(in super::super) fn open_pane_menu_from_button(
         &mut self,
         pane_id: &str,
         position: gpui_kit::Point<Pixels>,
+        window: &Window,
         cx: &mut Context<Self>,
     ) {
         if !self.is_active_pane_id(pane_id) {
             let _ = self.focus_pane_target(pane_id, cx);
         }
-        self.open_terminal_context_menu(position, cx);
+        self.open_terminal_context_menu_for_window(position, window, cx);
         if let Some(state) = self.terminal_context_menu.as_mut() {
             state.pane_actions_for = Some(pane_id.to_string());
             self.notify_overlay(cx);
@@ -357,6 +360,7 @@ impl TerminalView {
     }
 
     /// 执行窗格菜单项：先关菜单，再对菜单记录的目标窗格生效。
+    #[cfg_attr(target_os = "macos", allow(dead_code))]
     pub(in super::super) fn execute_pane_menu_action(
         &mut self,
         action: PaneMenuAction,
