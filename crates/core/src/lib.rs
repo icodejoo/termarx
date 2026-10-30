@@ -1,7 +1,6 @@
 mod backend;
 mod cell_metrics;
 mod config;
-mod dll_search;
 mod frame;
 mod glyph_geometry;
 mod keyboard;
@@ -55,7 +54,6 @@ pub use kitty_graphics::{
     KittyGraphicsPlaceholder, KittyGraphicsRenderPlacement, KittyGraphicsScreen,
     KittyGraphicsState, kitty_graphics_placeholders_from_alacritty_grid,
 };
-pub use dll_search::restrict_dll_search_path;
 pub use links::{DetectedLink, DetectedViewportLink, classify_link_token, find_link_in_line};
 #[cfg(unix)]
 pub use locale::{

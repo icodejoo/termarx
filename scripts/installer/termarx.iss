@@ -54,6 +54,9 @@ RestartApplications=no
 [Files]
 Source: "..\..\target\{#MyTarget}\release\{#MyExeName}"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\..\target\{#MyTarget}\release\{#MyCliExeName}"; DestDir: "{app}"; Flags: ignoreversion
+; 内置新版 ConPTY：应用不再读 PATH 找 DLL，必须放在 exe 同目录
+Source: "..\..\vendor\conpty\{#MyArch}\conpty.dll"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\..\vendor\conpty\{#MyArch}\OpenConsole.exe"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
 Name: "{group}\Termarx"; Filename: "{app}\{#MyExeName}"

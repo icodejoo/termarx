@@ -2868,6 +2868,10 @@ fn osc_events_signal_prompt_idle(events: &[OscEvent]) -> bool {
 
 /// 清掉过期的鼠标/焦点上报模式；有模式被清返回 true，本来就是关的返回 false。
 fn reset_stale_input_report_modes<T: EventListener>(term: &mut Term<T>) -> bool {
+    // 备用屏幕下前台一定是全屏程序，上报模式是它主动开的，不能清（否则滚轮转发会失效）
+    if term.mode().contains(TermMode::ALT_SCREEN) {
+        return false;
+    }
     let stale_flags =
         TermMode::MOUSE_MODE | TermMode::SGR_MOUSE | TermMode::UTF8_MOUSE | TermMode::FOCUS_IN_OUT;
     if !term.mode().intersects(stale_flags) {
@@ -3705,13 +3709,20 @@ mod tests {
 
     #[test]
     fn prompt_idle_reset_keeps_unrelated_modes() {
-        let mut term = term_after_bytes(b"\x1b[?2004h\x1b[?1h\x1b[?1049h\x1b[?1003h");
+        let mut term = term_after_bytes(b"\x1b[?2004h\x1b[?1h\x1b[?1003h");
 
         assert!(reset_stale_input_report_modes(&mut term));
 
         assert!(term.mode().contains(TermMode::BRACKETED_PASTE));
         assert!(term.mode().contains(TermMode::APP_CURSOR));
-        assert!(term.mode().contains(TermMode::ALT_SCREEN));
+    }
+
+    #[test]
+    fn prompt_idle_reset_keeps_modes_on_alternate_screen() {
+        let mut term = term_after_bytes(b"\x1b[?1049h\x1b[?1002h\x1b[?1006h");
+        assert!(!reset_stale_input_report_modes(&mut term));
+        assert!(term.mode().intersects(TermMode::MOUSE_MODE));
+        assert!(term.mode().contains(TermMode::SGR_MOUSE));
     }
 
     #[test]
