@@ -1978,9 +1978,8 @@ impl NativeEventLoop {
     }
 
     fn handle_osc_events(&self, osc_events: Vec<OscEvent>) {
-        for osc_event in osc_events {
-            self.event_proxy
-                .send_terminal_event(terminal_event_from_osc(osc_event));
+        for terminal_event in osc_events.into_iter().filter_map(terminal_event_from_osc) {
+            self.event_proxy.send_terminal_event(terminal_event);
         }
     }
 
@@ -1990,6 +1989,7 @@ impl NativeEventLoop {
         let mut unprocessed = 0usize;
         let mut graphics_changed = false;
         let mut term_mutated = false;
+        let mut input_modes_reset = false;
 
         let _terminal_lease = Some(self.render_state.terminal.lease());
         let mut terminal = None;
@@ -2036,6 +2036,7 @@ impl NativeEventLoop {
             }
             let (filtered, osc_events) = state.osc_interceptor.process(&filtered);
             processed = processed.saturating_add(unprocessed);
+            let prompt_idle = osc_events_signal_prompt_idle(&osc_events);
             self.handle_osc_events(osc_events);
 
             for item in state.kitty_graphics_interceptor.process(&filtered) {
@@ -2123,6 +2124,12 @@ impl NativeEventLoop {
                 }
             }
 
+            // 本块输出处理完再重置：提示符之前的残留上报模式一并清掉
+            if prompt_idle && reset_stale_input_report_modes(&mut **terminal) {
+                term_mutated = true;
+                input_modes_reset = true;
+            }
+
             unprocessed = 0;
             if processed >= NATIVE_EVENT_LOOP_MAX_LOCKED_READ {
                 break;
@@ -2135,7 +2142,8 @@ impl NativeEventLoop {
         if term_mutated && let Some(terminal) = terminal.as_deref() {
             self.render_state.record_mutation(terminal);
         }
-        if state.parser.sync_timeout().sync_timeout().is_none() && (graphics_changed || parsed > 0)
+        if state.parser.sync_timeout().sync_timeout().is_none()
+            && (graphics_changed || input_modes_reset || parsed > 0)
         {
             self.event_proxy.send_event(AlacEvent::Wakeup);
         }
@@ -2825,15 +2833,50 @@ fn terminal_event_from_alacritty(event: AlacEvent) -> Option<TerminalEvent> {
     }
 }
 
-fn terminal_event_from_osc(event: OscEvent) -> TerminalEvent {
-    match event {
+/// 把 OSC 拦截事件转成对外的终端事件；`PromptIdle` 只供内部重置输入上报模式，不对外发事件。
+fn terminal_event_from_osc(event: OscEvent) -> Option<TerminalEvent> {
+    Some(match event {
         OscEvent::WorkingDirectory(path) => TerminalEvent::WorkingDirectory(path),
         OscEvent::Progress(state) => TerminalEvent::Progress(state),
+        OscEvent::PromptIdle => return None,
         OscEvent::ShellPromptStart => TerminalEvent::ShellPromptStart,
         OscEvent::ShellCommandStart => TerminalEvent::ShellCommandStart,
         OscEvent::ShellCommandExecuting => TerminalEvent::ShellCommandExecuting,
         OscEvent::ShellCommandFinished(code) => TerminalEvent::ShellCommandFinished(code),
+    })
+}
+
+/// shell 回到提示符后必须清掉的"输入上报"私有模式：鼠标追踪、鼠标编码、焦点上报。
+///
+/// 前台程序崩溃/被杀时不会发关闭序列，新版 ConPTY 也不替它补，终端会一直上报，
+/// 上报内容被 shell 当成键入文字回显（如 `^[[<35;32;48M`）。
+const STALE_INPUT_REPORT_MODES: [NamedPrivateMode; 6] = [
+    NamedPrivateMode::ReportMouseClicks,
+    NamedPrivateMode::ReportCellMouseMotion,
+    NamedPrivateMode::ReportAllMouseMotion,
+    NamedPrivateMode::Utf8Mouse,
+    NamedPrivateMode::SgrMouse,
+    NamedPrivateMode::ReportFocusInOut,
+];
+
+/// 一批 OSC 事件里是否带有"shell 已回到提示符"的信号。
+fn osc_events_signal_prompt_idle(events: &[OscEvent]) -> bool {
+    events
+        .iter()
+        .any(|event| matches!(event, OscEvent::ShellPromptStart | OscEvent::PromptIdle))
+}
+
+/// 清掉过期的鼠标/焦点上报模式；有模式被清返回 true，本来就是关的返回 false。
+fn reset_stale_input_report_modes<T: EventListener>(term: &mut Term<T>) -> bool {
+    let stale_flags =
+        TermMode::MOUSE_MODE | TermMode::SGR_MOUSE | TermMode::UTF8_MOUSE | TermMode::FOCUS_IN_OUT;
+    if !term.mode().intersects(stale_flags) {
+        return false;
     }
+    for mode in STALE_INPUT_REPORT_MODES {
+        Handler::unset_private_mode(term, mode.into());
+    }
+    true
 }
 
 #[cfg(test)]
@@ -2849,7 +2892,8 @@ mod tests {
         WorkingDirFallback, advance_terminal_text, apply_cwd_report_env,
         capture_viewport_ranges_at_generation, configured_shell_launch, drain_runtime_events,
         is_powershell_program, login_shell_args, normalize_working_directory_candidate,
-        powershell_interactive_args, resolve_launch_working_directory, resolve_shell_path,
+        osc_events_signal_prompt_idle, powershell_interactive_args,
+        reset_stale_input_report_modes, resolve_launch_working_directory, resolve_shell_path,
         resolve_terminal_launch, search_term_buffer, should_drop_event, stop_synchronized_update,
         terminal_environment_overrides, terminal_event_from_osc, user_home_dir,
     };
@@ -3626,6 +3670,85 @@ mod tests {
     }
 
     #[test]
+    fn prompt_idle_reset_clears_stale_mouse_and_focus_modes() {
+        let mut term = term_after_bytes(b"\x1b[?1003h\x1b[?1006h\x1b[?1004h");
+        assert!(term.mode().intersects(TermMode::MOUSE_MODE));
+        assert!(term.mode().contains(TermMode::SGR_MOUSE));
+        assert!(term.mode().contains(TermMode::FOCUS_IN_OUT));
+
+        assert!(reset_stale_input_report_modes(&mut term));
+
+        let mode = backend::mouse_mode(*term.mode());
+        assert!(!mode.enabled);
+        assert!(!mode.sgr_encoding);
+        assert!(!term.mode().contains(TermMode::FOCUS_IN_OUT));
+        // 已经是关的，再重置不应报告变化
+        assert!(!reset_stale_input_report_modes(&mut term));
+    }
+
+    #[test]
+    fn prompt_idle_reset_clears_every_mouse_tracking_flavor() {
+        for enable in [
+            &b"\x1b[?1000h"[..],
+            b"\x1b[?1002h",
+            b"\x1b[?1003h",
+            b"\x1b[?1005h",
+            b"\x1b[?1006h",
+        ] {
+            let mut term = term_after_bytes(enable);
+            assert!(reset_stale_input_report_modes(&mut term), "{enable:?}");
+            assert!(!term.mode().intersects(TermMode::MOUSE_MODE), "{enable:?}");
+            assert!(!term.mode().contains(TermMode::SGR_MOUSE), "{enable:?}");
+            assert!(!term.mode().contains(TermMode::UTF8_MOUSE), "{enable:?}");
+        }
+    }
+
+    #[test]
+    fn prompt_idle_reset_keeps_unrelated_modes() {
+        let mut term = term_after_bytes(b"\x1b[?2004h\x1b[?1h\x1b[?1049h\x1b[?1003h");
+
+        assert!(reset_stale_input_report_modes(&mut term));
+
+        assert!(term.mode().contains(TermMode::BRACKETED_PASTE));
+        assert!(term.mode().contains(TermMode::APP_CURSOR));
+        assert!(term.mode().contains(TermMode::ALT_SCREEN));
+    }
+
+    #[test]
+    fn conpty_prompt_marker_resets_mouse_mode_left_by_exited_app() {
+        // 复现：TUI 开了鼠标上报后退出没关，ConPTY 随后在提示符前发 OSC 9;9
+        let mut term = term_after_bytes(b"\x1b[?1003h\x1b[?1006h");
+        let mut interceptor = crate::osc_intercept::OscInterceptor::new();
+        let (_, events) = interceptor.process(b"\x1b]9;9;\"C:\\Users\\jelon\"\x1b\\C:\\Users\\jelon>");
+
+        assert!(osc_events_signal_prompt_idle(&events));
+        assert!(reset_stale_input_report_modes(&mut term));
+        assert!(!backend::mouse_mode(*term.mode()).enabled);
+    }
+
+    #[test]
+    fn prompt_idle_signal_ignores_non_prompt_events() {
+        use crate::osc_intercept::OscEvent;
+        assert!(!osc_events_signal_prompt_idle(&[]));
+        assert!(!osc_events_signal_prompt_idle(&[
+            OscEvent::WorkingDirectory("/tmp".to_string()),
+            OscEvent::ShellCommandExecuting,
+        ]));
+        assert!(osc_events_signal_prompt_idle(&[OscEvent::ShellPromptStart]));
+        assert!(osc_events_signal_prompt_idle(&[
+            OscEvent::WorkingDirectory("/tmp".to_string()),
+            OscEvent::PromptIdle,
+        ]));
+    }
+
+    #[test]
+    fn prompt_idle_event_is_not_forwarded_as_terminal_event() {
+        use crate::osc_intercept::OscEvent;
+        assert!(terminal_event_from_osc(OscEvent::PromptIdle).is_none());
+        assert!(terminal_event_from_osc(OscEvent::ShellPromptStart).is_some());
+    }
+
+    #[test]
     fn search_term_buffer_includes_scrollback_rows() {
         let size = TerminalSize {
             cols: 16,
@@ -3936,11 +4059,12 @@ mod tests {
     fn drain_runtime_events_includes_custom_osc_progress_events() {
         let (events_tx, events_rx) = unbounded();
         events_tx
-            .send(RuntimeEvent::Terminal(terminal_event_from_osc(
-                crate::osc_intercept::OscEvent::Progress(
+            .send(RuntimeEvent::Terminal(
+                terminal_event_from_osc(crate::osc_intercept::OscEvent::Progress(
                     crate::shell_integration::ProgressState::Indeterminate,
-                ),
-            )))
+                ))
+                .expect("进度事件应转成终端事件"),
+            ))
             .unwrap();
         drop(events_tx);
 

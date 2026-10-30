@@ -22,6 +22,11 @@ pub enum OscEvent {
     /// Format: ESC ] 9 ; 4 ; state ; progress ST
     Progress(ProgressState),
 
+    /// OSC 9;9 - ConPTY/cmd/WSL 在每个提示符前上报 cwd，视为"shell 回到提示符"的信号。
+    /// 只随 OSC 9;9 附带发出（紧跟在对应的 `WorkingDirectory` 之后），OSC 7 不触发，
+    /// 避免运行中会自报 cwd 的 TUI 被误判成空闲。
+    PromptIdle,
+
     /// OSC 133;A - Prompt start
     ShellPromptStart,
 
@@ -121,8 +126,8 @@ impl OscInterceptor {
                 ParseState::OscPayload => {
                     if byte == 0x07 {
                         // BEL = OSC terminator
-                        if let Some(event) = self.parse_osc_payload() {
-                            events.push(event);
+                        if self.collect_events(&mut events) {
+                            // 自定义 OSC 已转成事件，不再透传
                         } else if self.should_consume_osc_payload() {
                             // Removed notification OSCs are handled by dropping them.
                         } else {
@@ -147,8 +152,8 @@ impl OscInterceptor {
                 ParseState::OscEscape => {
                     if byte == b'\\' {
                         // ESC \ = ST (String Terminator)
-                        if let Some(event) = self.parse_osc_payload() {
-                            events.push(event);
+                        if self.collect_events(&mut events) {
+                            // 自定义 OSC 已转成事件，不再透传
                         } else if self.should_consume_osc_payload() {
                             // Removed notification OSCs are handled by dropping them.
                         } else {
@@ -189,6 +194,22 @@ impl OscInterceptor {
         };
 
         payload.starts_with("9;") || payload.starts_with("777;")
+    }
+
+    /// 把当前缓冲的 OSC 解析成自定义事件追加到 `events`；识别成功返回 true。
+    ///
+    /// OSC 9;9 会在 `WorkingDirectory` 之后额外追加 `PromptIdle`。
+    fn collect_events(&self, events: &mut Vec<OscEvent>) -> bool {
+        let Some(event) = self.parse_osc_payload() else {
+            return false;
+        };
+        let prompt_idle =
+            matches!(event, OscEvent::WorkingDirectory(_)) && self.buffer.starts_with(b"9;9;");
+        events.push(event);
+        if prompt_idle {
+            events.push(OscEvent::PromptIdle);
+        }
+        true
     }
 
     /// Try to parse the OSC payload as a custom sequence we handle
@@ -402,7 +423,10 @@ mod tests {
         let (_, events) = process_str(&mut interceptor, "]9;9;\"/c/a%41\"");
         assert_eq!(
             events,
-            vec![OscEvent::WorkingDirectory("/c/a%41".to_string())]
+            vec![
+                OscEvent::WorkingDirectory("/c/a%41".to_string()),
+                OscEvent::PromptIdle,
+            ]
         );
     }
 
@@ -416,9 +440,10 @@ mod tests {
         assert!(output.is_empty());
         assert_eq!(
             events,
-            vec![OscEvent::WorkingDirectory(
-                "\\\\wsl.localhost\\Ubuntu\\home\\kamr".to_string()
-            )]
+            vec![
+                OscEvent::WorkingDirectory("\\\\wsl.localhost\\Ubuntu\\home\\kamr".to_string()),
+                OscEvent::PromptIdle,
+            ]
         );
     }
 
@@ -428,8 +453,34 @@ mod tests {
         let (_, events) = process_str(&mut interceptor, "\x1b]9;9;\"C:\\Users\\kamr\"\x07");
         assert_eq!(
             events,
-            vec![OscEvent::WorkingDirectory("C:\\Users\\kamr".to_string())]
+            vec![
+                OscEvent::WorkingDirectory("C:\\Users\\kamr".to_string()),
+                OscEvent::PromptIdle,
+            ]
         );
+    }
+
+    #[test]
+    fn osc_9_9_with_st_terminator_also_signals_prompt_idle() {
+        let mut interceptor = OscInterceptor::new();
+        // ConPTY 实际用 ESC \ 结尾
+        let (output, events) = process_str(&mut interceptor, "\x1b]9;9;\"C:\\x\"\x1b\\");
+        assert!(output.is_empty());
+        assert_eq!(events.last(), Some(&OscEvent::PromptIdle));
+    }
+
+    #[test]
+    fn osc_7_working_directory_does_not_signal_prompt_idle() {
+        let mut interceptor = OscInterceptor::new();
+        let (_, events) = process_str(&mut interceptor, "\x1b]7;file://host/tmp\x07");
+        assert!(!events.contains(&OscEvent::PromptIdle));
+    }
+
+    #[test]
+    fn osc_9_4_progress_does_not_signal_prompt_idle() {
+        let mut interceptor = OscInterceptor::new();
+        let (_, events) = process_str(&mut interceptor, "\x1b]9;4;1;50\x07");
+        assert!(!events.contains(&OscEvent::PromptIdle));
     }
 
     #[test]

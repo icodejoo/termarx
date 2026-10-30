@@ -640,6 +640,8 @@ fn spawn_deeplink_listener(cx: &mut App, deeplink_rx: Receiver<Vec<String>>) {
 }
 
 fn main() {
+    // 要在任何 PTY 创建之前，避免从 PATH 捡到别家的 conpty.dll
+    termy_core::restrict_dll_search_path();
     let cli_args: Vec<String> = std::env::args().skip(1).collect();
     if cli_args
         .first()

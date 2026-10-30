@@ -208,6 +208,8 @@ enum PluginCommand {
 }
 
 fn main() {
+    // 多路复用器 host 也会创建 PTY，同样要避免从 PATH 捡到别家的 conpty.dll
+    termy_core::restrict_dll_search_path();
     if std::env::args_os().nth(1).as_deref() == Some(std::ffi::OsStr::new("--multiplexer-host")) {
         let result = std::env::args_os()
             .nth(2)
