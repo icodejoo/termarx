@@ -26,6 +26,8 @@ pub(in crate::terminal_view) enum PaneMenuAction {
     Interrupt,
     /// 强制结束 shell 下的全部子进程。
     ForceStop,
+    /// 复位鼠标/焦点上报和备用屏幕，不动进程。
+    ResetTerminal,
     /// 和指定方向的相邻窗格交换位置。
     Move(NativeFocusDirection),
 }
@@ -401,6 +403,9 @@ impl TerminalView {
             }
             PaneMenuAction::ForceStop => {
                 self.force_stop_pane_task(pane_id.as_str());
+            }
+            PaneMenuAction::ResetTerminal => {
+                self.reset_pane_input_modes(pane_id.as_str());
             }
             PaneMenuAction::Move(direction) => {
                 self.move_pane_in_direction(pane_id.as_str(), direction, cx);

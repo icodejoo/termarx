@@ -2702,7 +2702,27 @@ impl Terminal {
     pub fn alternate_screen_mode(&self) -> bool {
         self.backend.alternate_screen_mode()
     }
+
+    /// 强制复位输入上报状态：关掉鼠标/焦点上报、应用光标键，并退出备用屏幕。
+    ///
+    /// 用于前台程序崩溃或被杀后终端状态残留（鼠标一动就乱码）。不受备用屏幕守卫限制，
+    /// 也不动 PTY 和进程，只改终端自身的显示状态。
+    pub fn reset_input_modes(&self) {
+        let mut sequence = String::new();
+        for mode in FORCE_RESET_PRIVATE_MODES {
+            sequence.push_str(&format!("\x1b[?{mode}l"));
+        }
+        // 没进备用屏幕时发 ?1049l 会白白恢复一次光标，所以只在需要时发
+        if self.alternate_screen_mode() {
+            sequence.push_str("\x1b[?1049l");
+        }
+        sequence.push_str("\x1b[?25h");
+        self.backend.feed_output(sequence.as_bytes());
+    }
 }
+
+/// 强制复位时要关掉的私有模式编号：鼠标上报（1000/1002/1003）、编码（1005/1006）、焦点上报（1004）、应用光标键（1）。
+const FORCE_RESET_PRIVATE_MODES: [u16; 7] = [1000, 1002, 1003, 1005, 1006, 1004, 1];
 
 /// Maximum number of alacritty events to drain in a single frame. Prevents
 /// massive output (e.g. `cat huge_file`) from blocking the render thread.
@@ -3671,6 +3691,19 @@ mod tests {
         let mut parser: ansi::Processor = ansi::Processor::new();
         parser.advance(&mut term, input);
         term
+    }
+
+    #[test]
+    fn force_reset_input_modes_clears_modes_even_on_alternate_screen() {
+        let terminal = Terminal::new_alacritty_display_for_test(test_terminal_size(), None);
+        terminal.feed_output(b"\x1b[?1049h\x1b[?1003h\x1b[?1006h\x1b[?1004h");
+        assert!(terminal.alternate_screen_mode());
+        assert!(terminal.mouse_mode().enabled);
+
+        terminal.reset_input_modes();
+
+        assert!(!terminal.alternate_screen_mode());
+        assert!(!terminal.mouse_mode().enabled);
     }
 
     #[test]

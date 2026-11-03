@@ -635,6 +635,15 @@ impl Terminal {
         }
     }
 
+    /// 强制复位终端的鼠标/焦点上报和备用屏幕状态；tmux 运行时无操作。
+    fn reset_input_modes(&self) {
+        if let Self::Native(terminal) = self
+            && let Ok(terminal) = terminal.lock()
+        {
+            terminal.reset_input_modes();
+        }
+    }
+
     fn write_input_owned(&self, input: Vec<u8>) {
         match self {
             Self::Native(terminal) => {

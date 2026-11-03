@@ -289,6 +289,7 @@ pub(super) const ENTRIES: &[(&str, &str)] = &[
     ("Copied branch name", "已复制分支名称"),
     ("Stop Task", "停止任务"),
     ("Force Stop Task", "强制结束任务"),
+    ("Reset Terminal Input Modes", "重置终端输入状态"),
     ("Move Pane Up", "窗格上移"),
     ("Move Pane Down", "窗格下移"),
     ("Move Pane Left", "窗格左移"),

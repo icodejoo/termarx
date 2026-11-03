@@ -2375,6 +2375,12 @@ impl TerminalView {
                                         true,
                                         PaneMenuAction::ForceStop,
                                     ))
+                                    .child(pane_action_item(
+                                        "terminal-context-menu-reset-terminal",
+                                        t!("Reset Terminal Input Modes"),
+                                        true,
+                                        PaneMenuAction::ResetTerminal,
+                                    ))
                                     .child(divider())
                                     .child(pane_action_item(
                                         "terminal-context-menu-move-up",

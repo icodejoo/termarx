@@ -28,8 +28,23 @@ impl TerminalView {
     /// 给指定窗格发 Ctrl+C，中断它的前台任务（窗格和 shell 保留）。
     ///
     /// 返回值：是否成功写入；窗格不存在时为 `false`。
+    ///
+    /// 同时复位鼠标/焦点上报：前台程序被中断后不会发关闭序列，残留模式会让鼠标一动就乱码。
     pub(in crate::terminal_view) fn interrupt_pane_task(&self, pane_id: &str) -> bool {
-        self.send_input_to_pane(pane_id, INTERRUPT_BYTE)
+        let sent = self.send_input_to_pane(pane_id, INTERRUPT_BYTE);
+        self.reset_pane_input_modes(pane_id);
+        sent
+    }
+
+    /// 强制复位指定窗格的鼠标/焦点上报和备用屏幕状态，不动进程。
+    ///
+    /// 返回值：窗格存在时为 `true`。
+    pub(in crate::terminal_view) fn reset_pane_input_modes(&self, pane_id: &str) -> bool {
+        let Some(terminal) = self.pane_terminal_by_id(pane_id) else {
+            return false;
+        };
+        terminal.reset_input_modes();
+        true
     }
 
     /// 强制结束指定窗格里 shell 的全部子孙进程（shell 本身和窗格保留）。
@@ -37,6 +52,8 @@ impl TerminalView {
     /// 枚举进程较慢，放到后台线程里做，不阻塞界面。
     /// 返回值：是否拿到了窗格 shell 的 pid；tmux 运行时拿不到，返回 `false`。
     pub(in crate::terminal_view) fn force_stop_pane_task(&self, pane_id: &str) -> bool {
+        // 进程可能早就没了，先复位终端状态，保证按钮一定有效果
+        self.reset_pane_input_modes(pane_id);
         let Some(shell_pid) = self
             .pane_terminal_by_id(pane_id)
             .and_then(Terminal::child_pid)
