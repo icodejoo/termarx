@@ -3843,6 +3843,59 @@ impl Render for TerminalView {
                                 .into_any_element(),
                         );
                     }
+
+                    // 残留上报提示：普通屏幕下仍开着鼠标/焦点上报 = 输入乱码的来源。
+                    // 多窗格时用它标出是哪一个窗格出了问题，点击即软复位（不打断 TUI）。
+                    if terminal.has_stale_input_report_modes() {
+                        let badge_text = t!("Input modes stale, click to reset").to_string();
+                        let badge_width = unicode_width::UnicodeWidthStr::width(badge_text.as_str())
+                            as f32
+                            * PANE_TITLE_FONT_SIZE
+                            * PANE_TITLE_CHAR_WIDTH_RATIO
+                            + PANE_TITLE_PADDING_X * 2.0;
+                        if badge_width + PANE_TITLE_INSET * 2.0 <= pane_frame_width {
+                            let mut badge_bg = colors.cursor;
+                            badge_bg.a = 0.92;
+                            let badge_fg: gpui_kit::Hsla = colors.background.into();
+                            let badge_hover_bg: gpui_kit::Hsla = colors.cursor.into();
+                            let badge_pane_id = pane.id.clone();
+                            pane_title_labels.push(
+                                div()
+                                    .id(SharedString::from(format!("pane-stale-input-{}", pane.id)))
+                                    .absolute()
+                                    .left(px(pane_frame_left + pane_frame_width
+                                        - PANE_TITLE_INSET
+                                        - badge_width))
+                                    .top(px(pane_frame_top + PANE_TITLE_HEIGHT * 0.5 + 2.0))
+                                    .w(px(badge_width))
+                                    .h(px(PANE_TITLE_HEIGHT))
+                                    .px(px(PANE_TITLE_PADDING_X))
+                                    .whitespace_nowrap()
+                                    .text_size(px(PANE_TITLE_FONT_SIZE))
+                                    .line_height(px(PANE_TITLE_HEIGHT))
+                                    .text_color(badge_fg)
+                                    .bg(badge_bg)
+                                    .cursor_pointer()
+                                    .hover(move |style| style.bg(badge_hover_bg))
+                                    .block_mouse_except_scroll()
+                                    .on_mouse_down(
+                                        MouseButton::Left,
+                                        cx.listener(
+                                            move |view, _event: &MouseDownEvent, _window, cx| {
+                                                view.reset_pane_input_modes(
+                                                    badge_pane_id.as_str(),
+                                                    false,
+                                                );
+                                                cx.notify();
+                                                cx.stop_propagation();
+                                            },
+                                        ),
+                                    )
+                                    .child(badge_text)
+                                    .into_any_element(),
+                            );
+                        }
+                    }
                 }
 
                 if let Some(drag) = self.pane_move_drag.as_ref().filter(|drag| drag.active) {

@@ -2703,26 +2703,36 @@ impl Terminal {
         self.backend.alternate_screen_mode()
     }
 
-    /// 强制复位输入上报状态：关掉鼠标/焦点上报、应用光标键，并退出备用屏幕。
+    /// 复位输入上报状态；不动 PTY 和进程，只改终端自身的显示状态。
     ///
-    /// 用于前台程序崩溃或被杀后终端状态残留（鼠标一动就乱码）。不受备用屏幕守卫限制，
-    /// 也不动 PTY 和进程，只改终端自身的显示状态。
-    pub fn reset_input_modes(&self) {
+    /// - `leave_alternate_screen = false`（软复位）：只关鼠标/焦点上报，保留备用屏幕、
+    ///   应用光标键和光标状态，正在运行的 TUI 界面不会被打断。
+    /// - `leave_alternate_screen = true`（硬复位）：额外关应用光标键、退出备用屏幕并显示光标，
+    ///   用于前台程序已崩溃或被杀、终端状态残留的场景。
+    pub fn reset_input_modes(&self, leave_alternate_screen: bool) {
         let mut sequence = String::new();
-        for mode in FORCE_RESET_PRIVATE_MODES {
-            sequence.push_str(&format!("\x1b[?{mode}l"));
+        for mode in SOFT_RESET_PRIVATE_MODES {
+            sequence.push_str(&format!("[?{mode}l"));
         }
-        // 没进备用屏幕时发 ?1049l 会白白恢复一次光标，所以只在需要时发
-        if self.alternate_screen_mode() {
-            sequence.push_str("\x1b[?1049l");
+        if leave_alternate_screen {
+            sequence.push_str("[?1l");
+            // 没进备用屏幕时发 ?1049l 会白白恢复一次光标，所以只在需要时发
+            if self.alternate_screen_mode() {
+                sequence.push_str("[?1049l");
+            }
+            sequence.push_str("[?25h");
         }
-        sequence.push_str("\x1b[?25h");
         self.backend.feed_output(sequence.as_bytes());
+    }
+
+    /// 是否存在"普通屏幕下仍开着鼠标/焦点上报"的可疑残留（备用屏幕下是 TUI 主动开的，不算）。
+    pub fn has_stale_input_report_modes(&self) -> bool {
+        !self.alternate_screen_mode() && self.mouse_mode().enabled
     }
 }
 
-/// 强制复位时要关掉的私有模式编号：鼠标上报（1000/1002/1003）、编码（1005/1006）、焦点上报（1004）、应用光标键（1）。
-const FORCE_RESET_PRIVATE_MODES: [u16; 7] = [1000, 1002, 1003, 1005, 1006, 1004, 1];
+/// 软复位要关掉的私有模式编号：鼠标上报（1000/1002/1003）、编码（1005/1006）、焦点上报（1004）。
+const SOFT_RESET_PRIVATE_MODES: [u16; 6] = [1000, 1002, 1003, 1005, 1006, 1004];
 
 /// Maximum number of alacritty events to drain in a single frame. Prevents
 /// massive output (e.g. `cat huge_file`) from blocking the render thread.
@@ -3700,9 +3710,20 @@ mod tests {
         assert!(terminal.alternate_screen_mode());
         assert!(terminal.mouse_mode().enabled);
 
-        terminal.reset_input_modes();
+        terminal.reset_input_modes(true);
 
         assert!(!terminal.alternate_screen_mode());
+        assert!(!terminal.mouse_mode().enabled);
+    }
+
+    #[test]
+    fn soft_reset_input_modes_keeps_alternate_screen() {
+        let terminal = Terminal::new_alacritty_display_for_test(test_terminal_size(), None);
+        terminal.feed_output(b"[?1049h[?1003h[?1006h");
+
+        terminal.reset_input_modes(false);
+
+        assert!(terminal.alternate_screen_mode());
         assert!(!terminal.mouse_mode().enabled);
     }
 

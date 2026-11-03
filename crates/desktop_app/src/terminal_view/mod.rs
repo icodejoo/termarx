@@ -635,12 +635,23 @@ impl Terminal {
         }
     }
 
-    /// 强制复位终端的鼠标/焦点上报和备用屏幕状态；tmux 运行时无操作。
-    fn reset_input_modes(&self) {
+    /// 复位终端的鼠标/焦点上报；`leave_alternate_screen` 为 `true` 时同时退出备用屏幕（会打断 TUI）。
+    /// tmux 运行时无操作。
+    fn reset_input_modes(&self, leave_alternate_screen: bool) {
         if let Self::Native(terminal) = self
             && let Ok(terminal) = terminal.lock()
         {
-            terminal.reset_input_modes();
+            terminal.reset_input_modes(leave_alternate_screen);
+        }
+    }
+
+    /// 普通屏幕下是否残留鼠标/焦点上报（乱码的典型来源）；tmux 运行时恒为 `false`。
+    fn has_stale_input_report_modes(&self) -> bool {
+        match self {
+            Self::Native(terminal) => terminal
+                .lock()
+                .is_ok_and(|terminal| terminal.has_stale_input_report_modes()),
+            Self::Tmux(_) => false,
         }
     }
 
