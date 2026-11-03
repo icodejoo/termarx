@@ -151,8 +151,12 @@ jobs:
           toolchain: stable
           targets: x86_64-pc-windows-msvc
 
+      # shared-key 与 warm-cache.yml 一致：tag 构建只能读 main 上预热的缓存。
       - name: Cache Rust
         uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          shared-key: windows-release
+          save-if: false
 
       - name: Install Inno Setup
         run: choco install innosetup --version="$env:INNOSETUP_VERSION" --no-progress -y

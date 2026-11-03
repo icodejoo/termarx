@@ -1,0 +1,49 @@
+name: Warm Rust Cache
+
+# 在 main 上预热 Windows 发版用的 Rust 编译缓存。
+# GitHub 缓存按 ref 隔离：tag 构建只能读 main 上的缓存，读不到别的 tag 存的。
+# 不在 main 上存一份，每次发版都是冷编译（约 12 分钟）。
+# 只在依赖或 Rust 源码变动时跑；cache key 必须与 ci.yml 的 build-windows-setup 一致（shared-key）。
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "Cargo.lock"
+      - "Cargo.toml"
+      - "crates/**"
+      - ".cargo/**"
+      - ".github/workflows/warm-cache.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: warm-cache
+  cancel-in-progress: true
+
+jobs:
+  warm-windows:
+    name: Warm Windows x64 cache
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
+        with:
+          toolchain: stable
+          targets: x86_64-pc-windows-msvc
+
+      - name: Cache Rust
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          shared-key: windows-release
+
+      # 与 scripts/build-setup.ps1 里的编译命令保持一致，缓存才能复用。
+      - name: Build release binaries
+        run: cargo build --release --target x86_64-pc-windows-msvc -p termy -p termy_cli
