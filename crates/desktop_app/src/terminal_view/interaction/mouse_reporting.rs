@@ -1,4 +1,5 @@
 use super::*;
+use std::{io::Write as _, sync::OnceLock, time::SystemTime};
 use termy_core::{
     TerminalMouseButton, TerminalMouseEventKind, TerminalMouseModifiers, TerminalMousePosition,
     encode_mouse_report,
@@ -17,6 +18,8 @@ pub(in crate::terminal_view) struct MouseReportingState {
     pub(in crate::terminal_view) middle_button: Option<MouseReportTargetCell>,
     pub(in crate::terminal_view) right_button: Option<MouseReportTargetCell>,
     pub(in crate::terminal_view) hover_target: Option<MouseReportTargetCell>,
+    /// 上一次真正发出无按键移动报告的时间，用于节流。
+    pub(in crate::terminal_view) last_move_report_at: Option<Instant>,
     pub(in crate::terminal_view) scroll_accumulator_x: f32,
     pub(in crate::terminal_view) scroll_accumulator_y: f32,
 }
@@ -122,6 +125,52 @@ fn mouse_forward_outcome(
     }
 }
 
+/// 无按键移动报告的最小间隔：移动事件按格子去重后仍可能每秒上百条，
+/// 会把 TUI 的输入循环拖慢，进而让转义序列被拆开当成文字（`[<35;80;20M`）。
+const MOUSE_MOVE_REPORT_MIN_INTERVAL: Duration = Duration::from_millis(25);
+
+/// 鼠标报告调试日志的环境变量：设为文件路径后，每个写入 PTY 的鼠标报告都会追加一行记录。
+const MOUSE_LOG_ENV: &str = "TERMARX_MOUSE_LOG";
+
+/// 距上次发出移动报告是否还不到最小间隔（需要节流）。
+fn move_report_throttled(last: Option<Instant>, now: Instant) -> bool {
+    last.is_some_and(|last| now.saturating_duration_since(last) < MOUSE_MOVE_REPORT_MIN_INTERVAL)
+}
+
+/// 把一个鼠标报告包追加到调试日志（仅在设置了 `TERMARX_MOUSE_LOG` 时生效）。
+///
+/// 每行：毫秒时间戳、窗格、包长度、十六进制和可见字符，用来判断转义序列是否在写入前就被拆开。
+fn log_mouse_packet(pane_id: &str, packet: &[u8]) {
+    static LOG_PATH: OnceLock<Option<std::path::PathBuf>> = OnceLock::new();
+    let Some(path) = LOG_PATH.get_or_init(|| std::env::var_os(MOUSE_LOG_ENV).map(Into::into))
+    else {
+        return;
+    };
+    let millis = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .map_or(0, |elapsed| elapsed.as_millis());
+    let hex = packet
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<Vec<_>>()
+        .join(" ");
+    let visible = packet
+        .iter()
+        .map(|&byte| if byte == 0x1b { '^' } else { char::from(byte) })
+        .collect::<String>();
+    if let Ok(mut file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+    {
+        let _ = writeln!(
+            file,
+            "{millis} pane={pane_id} len={} {hex} | {visible}",
+            packet.len()
+        );
+    }
+}
+
 fn should_emit_drag_report(previous: &MouseReportTargetCell, next: CellPos) -> bool {
     previous.col != next.col || previous.row != next.row
 }
@@ -212,6 +261,7 @@ impl TerminalView {
         if packet.is_empty() {
             return false;
         }
+        log_mouse_packet(pane_id, packet);
 
         match self.runtime_kind() {
             RuntimeKind::Tmux => self.tmux_send_input_to_pane(pane_id, packet),
@@ -229,6 +279,7 @@ impl TerminalView {
         if packet.is_empty() {
             return false;
         }
+        log_mouse_packet(pane_id, &packet);
 
         match self.runtime_kind() {
             RuntimeKind::Tmux => self.tmux_send_input_to_pane(pane_id, &packet),
@@ -513,17 +564,25 @@ impl TerminalView {
                 self.mouse_reporting.hover_target = None;
                 return false;
             };
-            if !should_emit_move_report(
-                self.mouse_reporting.hover_target.as_ref(),
-                pane_id.as_str(),
-                cell,
-            ) {
+            let now = Instant::now();
+            // 被节流时不更新 hover_target，下一次移动会带着最新格子再发；
+            // 仍按"已处理"返回，避免本地选择/滚动逻辑抢这个事件。
+            let throttled = move_report_throttled(self.mouse_reporting.last_move_report_at, now);
+            if throttled
+                || !should_emit_move_report(
+                    self.mouse_reporting.hover_target.as_ref(),
+                    pane_id.as_str(),
+                    cell,
+                )
+            {
                 let outcome = self
                     .pane_mouse_mode(pane_id.as_str())
                     .map_or(MouseForwardOutcome::NotHandled, |mode| {
                         mouse_forward_outcome(mode, None)
                     });
-                if outcome.is_handled() {
+                if throttled {
+                    // 保持旧的 hover_target，等下一次移动带着最新格子再发
+                } else if outcome.is_handled() {
                     self.mouse_reporting.hover_target = Some(MouseReportTargetCell {
                         pane_id,
                         col: cell.col,
@@ -540,6 +599,9 @@ impl TerminalView {
                     cell,
                     event.modifiers,
                 );
+                if outcome == MouseForwardOutcome::Sent {
+                    self.mouse_reporting.last_move_report_at = Some(now);
+                }
                 if outcome.is_handled() {
                     self.mouse_reporting.hover_target = Some(MouseReportTargetCell {
                         pane_id,
@@ -839,6 +901,21 @@ mod tests {
             Some(&target),
             "%1",
             CellPos { col: 3, row: 7 }
+        ));
+    }
+
+    #[test]
+    fn move_reports_are_throttled_within_the_minimum_interval() {
+        let start = Instant::now();
+        assert!(!move_report_throttled(None, start));
+        assert!(move_report_throttled(Some(start), start));
+        assert!(move_report_throttled(
+            Some(start),
+            start + MOUSE_MOVE_REPORT_MIN_INTERVAL / 2
+        ));
+        assert!(!move_report_throttled(
+            Some(start),
+            start + MOUSE_MOVE_REPORT_MIN_INTERVAL
         ));
     }
 

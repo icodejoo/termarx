@@ -22,6 +22,9 @@ pub struct RemoteState {
     pub bracketed_paste: bool,
     pub alternate_screen: bool,
     pub clipboard_paste_events: bool,
+    /// 备用屏幕里出现过 shell 提示符标记；旧版状态里没有该字段，默认 false。
+    #[serde(default)]
+    pub prompt_in_alt_screen: bool,
     pub graphics_revision: u64,
     #[serde(with = "serde_deadline")]
     pub graphics_deadline: Option<std::time::Instant>,
@@ -47,6 +50,7 @@ impl RemoteState {
             bracketed_paste: terminal.bracketed_paste_mode(),
             alternate_screen,
             clipboard_paste_events: terminal.kitty_clipboard_paste_events_enabled(),
+            prompt_in_alt_screen: terminal.prompt_in_alt_screen(),
             graphics_revision,
             graphics_deadline: graphics
                 .iter()

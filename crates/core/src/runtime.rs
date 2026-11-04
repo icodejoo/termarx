@@ -1839,6 +1839,8 @@ struct NativeRenderState {
     generation: Arc<AtomicU64>,
     palette_revision: Arc<AtomicU64>,
     palette_snapshot: Arc<FairMutex<crate::TerminalPalette>>,
+    /// 备用屏幕里出现过 shell 提示符标记：说明前台 TUI 已经不在，鼠标上报等模式是残留。
+    prompt_in_alt_screen: Arc<AtomicBool>,
 }
 
 impl NativeRenderState {
@@ -2037,6 +2039,9 @@ impl NativeEventLoop {
             let (filtered, osc_events) = state.osc_interceptor.process(&filtered);
             processed = processed.saturating_add(unprocessed);
             let prompt_idle = osc_events_signal_prompt_idle(&osc_events);
+            let command_started = osc_events
+                .iter()
+                .any(|event| matches!(event, OscEvent::ShellCommandExecuting));
             self.handle_osc_events(osc_events);
 
             for item in state.kitty_graphics_interceptor.process(&filtered) {
@@ -2122,6 +2127,18 @@ impl NativeEventLoop {
                         }
                     }
                 }
+            }
+
+            // 备用屏幕下出现提示符标记 = TUI 已死；记下来供界面提示（不自动清，避免误伤嵌套 shell）。
+            // 新命令开始执行则说明前台又有程序了，撤销标记。
+            if command_started {
+                self.render_state
+                    .prompt_in_alt_screen
+                    .store(false, Ordering::Relaxed);
+            } else if prompt_idle && terminal.mode().contains(TermMode::ALT_SCREEN) {
+                self.render_state
+                    .prompt_in_alt_screen
+                    .store(true, Ordering::Relaxed);
             }
 
             // 本块输出处理完再重置：提示符之前的残留上报模式一并清掉
@@ -2723,12 +2740,79 @@ impl Terminal {
             sequence.push_str("[?25h");
         }
         self.backend.feed_output(sequence.as_bytes());
+        if leave_alternate_screen {
+            self.backend.clear_prompt_in_alt_screen();
+        }
     }
 
     /// 是否存在"普通屏幕下仍开着鼠标/焦点上报"的可疑残留（备用屏幕下是 TUI 主动开的，不算）。
+    ///
+    /// 备用屏幕下靠提示符标记判断：TUI 被杀后 shell 提示符会出现在备用屏幕里，
+    /// 此时鼠标上报仍开着，鼠标一动就会往 shell 里输入坐标。
+    ///
+    /// TUI 还活着但解析不了鼠标上报时，坐标会被当成文本打进输入框（`[<35;80;20M`），
+    /// 所以光标附近出现这种文本也判定为泄漏。
     pub fn has_stale_input_report_modes(&self) -> bool {
-        !self.alternate_screen_mode() && self.mouse_mode().enabled
+        if !self.mouse_mode().enabled {
+            return false;
+        }
+        !self.alternate_screen_mode()
+            || self.backend.prompt_in_alt_screen()
+            || self.cursor_area_has_leaked_mouse_report()
     }
+
+    /// 光标所在行及上下各一行里，是否已经出现被当成文本打出来的鼠标上报。
+    fn cursor_area_has_leaked_mouse_report(&self) -> bool {
+        let (_, cursor_row) = self.cursor_position();
+        let first = cursor_row.saturating_sub(1) as i32;
+        // 不能超出屏幕：越界的行在远程后端会触发一次阻塞查询
+        let last = (cursor_row.saturating_add(1) as i32).min(self.line_bounds().1);
+        let mut lines: Vec<(i32, String)> = Vec::new();
+        self.visit_line_cells(first, last, |_, line, _, cell| {
+            if lines.last().is_none_or(|(current, _)| *current != line) {
+                lines.push((line, String::new()));
+            }
+            if let Some((_, text)) = lines.last_mut() {
+                text.push_str(&cell.text);
+            }
+        });
+        lines
+            .iter()
+            .any(|(_, text)| contains_leaked_sgr_mouse_report(text))
+    }
+
+    /// 备用屏幕里是否出现过 shell 提示符标记（TUI 已退出但屏幕状态残留）。
+    pub fn prompt_in_alt_screen(&self) -> bool {
+        self.backend.prompt_in_alt_screen()
+    }
+}
+
+/// 文本里是否含有被当成普通字符打出来的 SGR 鼠标上报（ESC 被吞后剩下的 `[<35;80;20M`）。
+fn contains_leaked_sgr_mouse_report(text: &str) -> bool {
+    let bytes = text.as_bytes();
+    let mut start = 0;
+    while let Some(offset) = text[start..].find("[<") {
+        let mut index = start + offset + 2;
+        let mut fields = 0;
+        loop {
+            let digits = bytes[index..]
+                .iter()
+                .take_while(|b| b.is_ascii_digit())
+                .count();
+            if digits == 0 {
+                break;
+            }
+            index += digits;
+            fields += 1;
+            match bytes.get(index) {
+                Some(b';') if fields < 3 => index += 1,
+                Some(b'M' | b'm') if fields == 3 => return true,
+                _ => break,
+            }
+        }
+        start += offset + 2;
+    }
+    false
 }
 
 /// 软复位要关掉的私有模式编号：鼠标上报（1000/1002/1003）、编码（1005/1006）、焦点上报（1004）。
@@ -2924,11 +3008,12 @@ mod tests {
         TerminalDamageSnapshot, TerminalEvent, TerminalLaunch, TerminalOptions,
         TerminalRuntimeConfig, TerminalSize, TerminalWakeupNotifier, WindowsShell,
         WorkingDirFallback, advance_terminal_text, apply_cwd_report_env,
-        capture_viewport_ranges_at_generation, configured_shell_launch, drain_runtime_events,
-        is_powershell_program, login_shell_args, normalize_working_directory_candidate,
-        osc_events_signal_prompt_idle, powershell_interactive_args,
-        reset_stale_input_report_modes, resolve_launch_working_directory, resolve_shell_path,
-        resolve_terminal_launch, search_term_buffer, should_drop_event, stop_synchronized_update,
+        capture_viewport_ranges_at_generation, configured_shell_launch,
+        contains_leaked_sgr_mouse_report, drain_runtime_events, is_powershell_program,
+        login_shell_args, normalize_working_directory_candidate, osc_events_signal_prompt_idle,
+        powershell_interactive_args, reset_stale_input_report_modes,
+        resolve_launch_working_directory, resolve_shell_path, resolve_terminal_launch,
+        search_term_buffer, should_drop_event, stop_synchronized_update,
         terminal_environment_overrides, terminal_event_from_osc, user_home_dir,
     };
     #[cfg(target_os = "windows")]
@@ -3717,6 +3802,32 @@ mod tests {
     }
 
     #[test]
+    fn leaked_sgr_mouse_report_text_is_detected() {
+        assert!(contains_leaked_sgr_mouse_report("> [<35;80;20M"));
+        assert!(contains_leaked_sgr_mouse_report("hi [<0;1;2m[<35;80;20M"));
+        assert!(!contains_leaked_sgr_mouse_report("[<35;80M"));
+        assert!(!contains_leaked_sgr_mouse_report("[<a;1;2M"));
+        assert!(!contains_leaked_sgr_mouse_report("array[<5] x"));
+        assert!(!contains_leaked_sgr_mouse_report("[<"));
+    }
+
+    #[test]
+    fn live_tui_leaking_mouse_reports_is_flagged_until_soft_reset() {
+        let terminal = Terminal::new_alacritty_display_for_test(test_terminal_size(), None);
+        // TUI 活着（备用屏幕 + 鼠标上报），输入框里被打出了坐标文本
+        terminal.feed_output(b"[?1049h[?1003h[?1006h> hello");
+        assert!(!terminal.has_stale_input_report_modes());
+
+        terminal.feed_output(b"[<35;80;20M");
+        assert!(terminal.alternate_screen_mode());
+        assert!(terminal.has_stale_input_report_modes());
+
+        terminal.reset_input_modes(false);
+        assert!(terminal.alternate_screen_mode());
+        assert!(!terminal.has_stale_input_report_modes());
+    }
+
+    #[test]
     fn soft_reset_input_modes_keeps_alternate_screen() {
         let terminal = Terminal::new_alacritty_display_for_test(test_terminal_size(), None);
         terminal.feed_output(b"[?1049h[?1003h[?1006h");
@@ -3784,7 +3895,8 @@ mod tests {
         // 复现：TUI 开了鼠标上报后退出没关，ConPTY 随后在提示符前发 OSC 9;9
         let mut term = term_after_bytes(b"\x1b[?1003h\x1b[?1006h");
         let mut interceptor = crate::osc_intercept::OscInterceptor::new();
-        let (_, events) = interceptor.process(b"\x1b]9;9;\"C:\\Users\\jelon\"\x1b\\C:\\Users\\jelon>");
+        let (_, events) =
+            interceptor.process(b"\x1b]9;9;\"C:\\Users\\jelon\"\x1b\\C:\\Users\\jelon>");
 
         assert!(osc_events_signal_prompt_idle(&events));
         assert!(reset_stale_input_report_modes(&mut term));

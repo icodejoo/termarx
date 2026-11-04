@@ -145,6 +145,9 @@ impl RemoteBackend {
     pub(crate) fn alternate_screen_mode(&self) -> bool {
         self.transport.state().alternate_screen
     }
+    pub(crate) fn prompt_in_alt_screen(&self) -> bool {
+        self.transport.state().prompt_in_alt_screen
+    }
     pub(crate) fn kitty_clipboard_paste_events_enabled(&self) -> bool {
         self.transport.state().clipboard_paste_events
     }

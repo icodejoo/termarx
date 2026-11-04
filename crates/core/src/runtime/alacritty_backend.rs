@@ -19,6 +19,7 @@ pub(super) struct AlacrittyBackend {
     render_generation: Arc<AtomicU64>,
     palette_revision: Arc<AtomicU64>,
     palette_snapshot: Arc<FairMutex<crate::TerminalPalette>>,
+    prompt_in_alt_screen: Arc<AtomicBool>,
     resize_anchor_state: Arc<crate::resize_anchor::ResizeAnchorState>,
     graphics_size: Arc<FairMutex<TerminalSize>>,
     pty_tx: Option<EventLoopSender>,
@@ -121,6 +122,7 @@ impl AlacrittyBackend {
         let render_generation = Arc::new(AtomicU64::new(0));
         let palette_revision = Arc::new(AtomicU64::new(0));
         let palette_snapshot = Arc::new(FairMutex::new(palette_snapshot));
+        let prompt_in_alt_screen = Arc::new(AtomicBool::new(false));
         let resize_anchor_state = Arc::new(crate::resize_anchor::ResizeAnchorState::default());
         let graphics_size = Arc::new(FairMutex::new(size));
 
@@ -137,6 +139,7 @@ impl AlacrittyBackend {
                 generation: render_generation.clone(),
                 palette_revision: palette_revision.clone(),
                 palette_snapshot: palette_snapshot.clone(),
+                prompt_in_alt_screen: prompt_in_alt_screen.clone(),
             },
             kitty_graphics.clone(),
             kitty_graphics_revision.clone(),
@@ -165,6 +168,7 @@ impl AlacrittyBackend {
             render_generation,
             palette_revision,
             palette_snapshot,
+            prompt_in_alt_screen,
             resize_anchor_state,
             graphics_size,
             pty_tx: Some(pty_tx),
@@ -204,6 +208,7 @@ impl AlacrittyBackend {
         let render_generation = Arc::new(AtomicU64::new(0));
         let palette_revision = Arc::new(AtomicU64::new(0));
         let palette_snapshot = Arc::new(FairMutex::new(palette_snapshot));
+        let prompt_in_alt_screen = Arc::new(AtomicBool::new(false));
         let resize_anchor_state = Arc::new(crate::resize_anchor::ResizeAnchorState::default());
 
         Self {
@@ -219,6 +224,7 @@ impl AlacrittyBackend {
             render_generation,
             palette_revision,
             palette_snapshot,
+            prompt_in_alt_screen,
             resize_anchor_state,
             graphics_size: Arc::new(FairMutex::new(size)),
             pty_tx: None,
@@ -845,6 +851,20 @@ impl AlacrittyBackend {
     pub fn keyboard_mode(&self) -> TerminalKeyboardMode {
         let term = self.term.lock();
         backend::keyboard_mode(*term.mode())
+    }
+
+    /// 备用屏幕里是否出现过提示符标记；备用屏幕已退出时顺手清掉标记。
+    pub fn prompt_in_alt_screen(&self) -> bool {
+        if !self.alternate_screen_mode() {
+            self.prompt_in_alt_screen.store(false, Ordering::Relaxed);
+            return false;
+        }
+        self.prompt_in_alt_screen.load(Ordering::Relaxed)
+    }
+
+    /// 清掉"备用屏幕里出现过提示符"的标记。
+    pub fn clear_prompt_in_alt_screen(&self) {
+        self.prompt_in_alt_screen.store(false, Ordering::Relaxed);
     }
 
     /// Check if the terminal is currently in alternate screen mode

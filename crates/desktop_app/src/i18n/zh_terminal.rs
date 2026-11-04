@@ -290,7 +290,10 @@ pub(super) const ENTRIES: &[(&str, &str)] = &[
     ("Stop Task", "停止任务"),
     ("Force Stop Task", "强制结束任务"),
     ("Reset Terminal Input Modes", "重置终端输入状态"),
-    ("Input modes stale, click to reset", "输入状态残留，点击重置"),
+    (
+        "Input modes stale, click to reset",
+        "输入状态残留，点击重置",
+    ),
     ("Move Pane Up", "窗格上移"),
     ("Move Pane Down", "窗格下移"),
     ("Move Pane Left", "窗格左移"),

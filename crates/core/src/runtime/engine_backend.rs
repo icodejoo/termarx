@@ -630,6 +630,20 @@ impl Backend {
         }
     }
 
+    pub(super) fn prompt_in_alt_screen(&self) -> bool {
+        match self {
+            Self::Alacritty(backend) => backend.prompt_in_alt_screen(),
+            Self::Tmon(_) => false,
+            Self::Remote(backend) => backend.prompt_in_alt_screen(),
+        }
+    }
+
+    pub(super) fn clear_prompt_in_alt_screen(&self) {
+        if let Self::Alacritty(backend) = self {
+            backend.clear_prompt_in_alt_screen();
+        }
+    }
+
     pub(super) fn alternate_screen_mode(&self) -> bool {
         match self {
             Self::Alacritty(backend) => backend.alternate_screen_mode(),
