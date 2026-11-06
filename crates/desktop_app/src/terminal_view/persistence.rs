@@ -1,6 +1,6 @@
 use super::*;
 use crate::workspace_store::{
-    StoredPane, StoredSession, StoredTab, StoredTabPresentation, StoredWorkspace,
+    StoredPane, StoredSession, StoredTab, StoredTabCommand, StoredTabPresentation, StoredWorkspace,
     WORKSPACE_STORE_FILE, WorkspaceStore,
 };
 use serde_json::{Value, json};
@@ -45,6 +45,8 @@ struct PersistedNativePane {
     cwd: Option<String>,
     /// 终端最后一次上报的窗格标题。
     reported_title: Option<String>,
+    /// 窗格级自定义指令参数。
+    params: std::collections::BTreeMap<String, String>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -57,6 +59,8 @@ struct PersistedNativeTab {
     pinned: bool,
     /// 标签背景色预设键，没设置为 `None`。
     color: Option<String>,
+    /// 标签自定义指令。
+    commands: Vec<StoredTabCommand>,
     manual_title: Option<String>,
 }
 
@@ -297,6 +301,7 @@ impl TerminalView {
                     presentation: tab.presentation,
                     pinned: tab.pinned,
                     color: tab.color,
+                    commands: tab.commands,
                     manual_title: tab.manual_title,
                     active_pane: tab.active_pane,
                     layout_tree_json: tab
@@ -306,6 +311,7 @@ impl TerminalView {
                         .panes
                         .into_iter()
                         .map(|pane| StoredPane {
+                            params: pane.params,
                             manual_title: pane.manual_title,
                             cwd: pane.cwd,
                             reported_title: pane.reported_title,
@@ -334,6 +340,7 @@ impl TerminalView {
                 presentation: tab.presentation,
                 pinned: tab.pinned,
                 color: tab.color,
+                commands: tab.commands,
                 manual_title: tab.manual_title,
                 active_pane: tab.active_pane,
                 layout_tree: tab
@@ -354,6 +361,7 @@ impl TerminalView {
                         manual_title: pane.manual_title,
                         cwd: pane.cwd,
                         reported_title: pane.reported_title,
+                        params: pane.params,
                     })
                     .collect(),
             })
@@ -478,6 +486,7 @@ impl TerminalView {
                             manual_title: meta.and_then(|meta| meta.manual_title.clone()),
                             cwd: meta.and_then(|meta| meta.cwd.clone()),
                             reported_title: meta.and_then(|meta| meta.reported_title.clone()),
+                            params: meta.map(|meta| meta.params.clone()).unwrap_or_default(),
                         }
                     })
                     .collect::<Vec<_>>();
@@ -515,6 +524,7 @@ impl TerminalView {
                         .tab_colors
                         .get(&tab.id)
                         .map(|color| color.key().to_string()),
+                    commands: self.tab_commands.get(&tab.id).cloned().unwrap_or_default(),
                     manual_title: tab.manual_title.clone(),
                 }
             })
@@ -621,6 +631,7 @@ impl TerminalView {
                     manual_title: non_blank_str(pane_value, "manual_title"),
                     cwd: non_blank_str(pane_value, "cwd"),
                     reported_title: non_blank_str(pane_value, "reported_title"),
+                    params: Default::default(),
                 });
             }
 
@@ -653,6 +664,7 @@ impl TerminalView {
                 active_pane,
                 pinned,
                 color,
+                commands: Vec::new(),
                 manual_title,
             });
         }
@@ -884,6 +896,10 @@ impl TerminalView {
             {
                 self.tab_colors.insert(tab.id, color);
             }
+            if !persisted_tab.commands.is_empty() {
+                self.tab_commands
+                    .insert(tab.id, persisted_tab.commands.clone());
+            }
             tab.manual_title = manual_title;
             // 手动窗格名、路径、上报标题按新建窗格的 id 重新映射回来。
             for (pane, persisted_pane) in tab.panes.iter().zip(persisted_tab.panes.iter()) {
@@ -895,6 +911,10 @@ impl TerminalView {
                 }
                 if let Some(title) = persisted_pane.reported_title.as_deref() {
                     self.record_pane_title(pane.id.as_str(), title);
+                }
+                if !persisted_pane.params.is_empty() {
+                    self.pane_meta.entry(pane.id.clone()).or_default().params =
+                        persisted_pane.params.clone();
                 }
             }
             if let Some(presentation) = persisted_tab.presentation {
@@ -1095,6 +1115,9 @@ impl TerminalView {
         let new_id = new_tab.id;
         if let Some(color) = self.tab_colors.get(&tab_id).copied() {
             self.tab_colors.insert(new_id, color);
+        }
+        if let Some(commands) = self.tab_commands.get(&tab_id).cloned() {
+            self.tab_commands.insert(new_id, commands);
         }
         self.session.native_pane_layout_trees.extend(layout_trees);
         self.session.native_pane_zoom_snapshots.extend(zoom);
@@ -1540,6 +1563,7 @@ mod tests {
             pinned: true,
             active_tab: 0,
             tabs: vec![StoredTab {
+                commands: Vec::new(),
                 zoomed: false,
                 presentation: None,
                 pinned: false,
@@ -1548,6 +1572,7 @@ mod tests {
                 active_pane: 0,
                 layout_tree_json: None,
                 panes: vec![StoredPane {
+                    params: Default::default(),
                     manual_title: None,
                     cwd: None,
                     reported_title: None,

@@ -75,10 +75,25 @@ pub struct StoredPane {
     /// 终端最后一次上报的窗格标题；旧数据缺该字段时为 None。
     #[serde(default)]
     pub reported_title: Option<String>,
+    /// 窗格级自定义指令参数（占位符名 -> 值）；旧数据缺该字段时为空。
+    #[serde(default)]
+    pub params: std::collections::BTreeMap<String, String>,
+}
+
+/// 标签自定义指令：名字显示在窗格右上角菜单里，点击后在该窗格执行 `command`。
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct StoredTabCommand {
+    /// 菜单里显示的名字。
+    pub name: String,
+    /// 要在窗格里执行的指令。
+    pub command: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct StoredTab {
+    /// 标签的自定义指令列表；旧数据缺该字段时为空。
+    #[serde(default)]
+    pub commands: Vec<StoredTabCommand>,
     #[serde(default)]
     pub zoomed: bool,
     #[serde(default)]

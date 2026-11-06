@@ -262,14 +262,16 @@ fn take_pending_key_release_action(
 
 impl TerminalView {
     fn overlay_owns_terminal_input(&self) -> bool {
-        overlay_owns_terminal_input_state(
-            self.is_command_palette_open(),
-            self.plugin_ui.is_some(),
-            self.search_open,
-            self.renaming_tab,
-            self.renaming_workspace,
-            self.release_notes_open() || self.shortcuts_popup_open(),
-        )
+        self.custom_command_edit.is_some()
+            || self.var_editor.is_some()
+            || overlay_owns_terminal_input_state(
+                self.is_command_palette_open(),
+                self.plugin_ui.is_some(),
+                self.search_open,
+                self.renaming_tab,
+                self.renaming_workspace,
+                self.release_notes_open() || self.shortcuts_popup_open(),
+            )
     }
 
     fn pane_keyboard_mode(&self, pane_id: &str) -> TerminalKeyboardMode {
@@ -858,6 +860,20 @@ impl TerminalView {
 
             if self.search_open {
                 if self.handle_search_key_down(key, event.keystroke.modifiers.shift, cx) {
+                    self.remember_consumed_key_release(key);
+                }
+                return;
+            }
+
+            if self.var_editor.is_some() {
+                if self.handle_var_editor_key_down(key, cx) {
+                    self.remember_consumed_key_release(key);
+                }
+                return;
+            }
+
+            if self.custom_command_edit.is_some() {
+                if self.handle_custom_command_key_down(key, cx) {
                     self.remember_consumed_key_release(key);
                 }
                 return;

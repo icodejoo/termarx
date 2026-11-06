@@ -173,6 +173,7 @@ impl SessionClient {
             .split_pane(
                 id,
                 StoredPane {
+                    params: Default::default(),
                     manual_title: None,
                     cwd: None,
                     reported_title: None,
@@ -223,6 +224,7 @@ impl SessionClient {
                 tab.split_pane(
                     id,
                     StoredPane {
+                        params: Default::default(),
                         manual_title: None,
                         cwd: None,
                         reported_title: None,
@@ -322,6 +324,7 @@ impl SessionClient {
                 let expected = self.layout()?;
                 let mut layout = decode(expected.as_deref())?;
                 let tab = StoredTab {
+                    commands: Vec::new(),
                     color: None,
                     zoomed: false,
                     presentation: None,
@@ -330,6 +333,7 @@ impl SessionClient {
                     active_pane: 0,
                     layout_tree_json: None,
                     panes: vec![StoredPane {
+                        params: Default::default(),
                         manual_title: None,
                         cwd: None,
                         reported_title: None,

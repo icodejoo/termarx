@@ -146,6 +146,7 @@ fn merge_tab(
         &(remote.active_pane, &remote.layout_tree_json, &remote.panes),
     )?;
     Ok(StoredTab {
+        commands: field(&base.commands, &local.commands, &remote.commands)?,
         color: field(&base.color, &local.color, &remote.color)?,
         zoomed: field(&base.zoomed, &local.zoomed, &remote.zoomed)?,
         pinned: field(&base.pinned, &local.pinned, &remote.pinned)?,
@@ -177,6 +178,7 @@ mod tests {
                 pinned: false,
                 active_tab: 0,
                 tabs: vec![StoredTab {
+                    commands: Vec::new(),
                     color: None,
                     zoomed: false,
                     presentation: None,
@@ -185,6 +187,7 @@ mod tests {
                     active_pane: 0,
                     layout_tree_json: None,
                     panes: vec![StoredPane {
+                        params: Default::default(),
                         manual_title: None,
                         cwd: None,
                         reported_title: None,

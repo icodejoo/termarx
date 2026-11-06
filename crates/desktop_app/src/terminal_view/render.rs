@@ -1989,12 +1989,12 @@ impl TerminalView {
                 cx,
             );
             let overlay_style = self.overlay_style();
-            let menu_width = if plugin_commands.is_empty() {
-                220.0
-            } else {
-                260.0
-            };
-            let row_height = 30.0;
+            let custom_commands = state
+                .pane_actions_for
+                .as_deref()
+                .map(|pane_id| self.tab_commands_for_pane(pane_id))
+                .unwrap_or_default();
+            let row_height = PANE_MENU_ROW_HEIGHT;
             let row_count =
                 5.0 + if state.buffer_position.is_some() {
                     1.0
@@ -2002,6 +2002,7 @@ impl TerminalView {
                     0.0
                 } + if state.image.is_some() { 1.0 } else { 0.0 }
                     + plugin_commands.len() as f32
+                    + custom_commands.len() as f32
                     + if state.pane_actions_for.is_some() {
                         PANE_MENU_ACTION_ROWS
                     } else {
@@ -2010,11 +2011,46 @@ impl TerminalView {
             let content_height = row_height * row_count
                 + 8.0
                 + if plugin_commands.is_empty() { 0.0 } else { 7.0 }
+                + if custom_commands.is_empty() { 0.0 } else { 7.0 }
                 + if state.pane_actions_for.is_some() {
                     PANE_MENU_ACTION_DIVIDERS * 7.0
                 } else {
                     0.0
                 };
+            // 宽度跟内容走：取所有菜单项文字里最宽的一个，再加左右内边距。
+            let mut widest_label = [
+                t!("Copy"),
+                t!("Paste"),
+                t!("Open Search"),
+                t!("Rename Pane"),
+                t!("Close Pane"),
+            ]
+            .into_iter()
+            .map(custom_commands::estimate_menu_text_width)
+            .fold(0.0_f32, f32::max);
+            if state.pane_actions_for.is_some() {
+                for label in [
+                    t!("Copy Current Directory Path"),
+                    t!("Copy Current Branch Name"),
+                    t!("Reset Terminal Input Modes"),
+                    t!("Force Stop Task"),
+                    t!("Edit Variables"),
+                    t!("Move Pane Right"),
+                ] {
+                    widest_label =
+                        widest_label.max(custom_commands::estimate_menu_text_width(label));
+                }
+            }
+            for command in &custom_commands {
+                widest_label =
+                    widest_label.max(custom_commands::estimate_menu_text_width(&command.name));
+            }
+            for command in &plugin_commands {
+                widest_label =
+                    widest_label.max(custom_commands::estimate_menu_text_width(&command.title));
+            }
+            let menu_width = (widest_label + PANE_MENU_ROW_PADDING_X * 2.0 + 10.0)
+                .clamp(PANE_MENU_MIN_WIDTH, PANE_MENU_MAX_WIDTH);
             let menu_height = context_menu_visible_height(
                 content_height,
                 self.last_viewport_size_px.map(|(_, height)| height as f32),
@@ -2031,10 +2067,10 @@ impl TerminalView {
                 div()
                     .id("terminal-context-menu-buffer-position")
                     .h(px(row_height))
-                    .px(px(10.0))
+                    .px(px(PANE_MENU_ROW_PADDING_X))
                     .flex()
                     .items_center()
-                    .text_size(px(12.0))
+                    .text_size(px(PANE_MENU_TEXT_SIZE - 1.0))
                     .text_color(text_disabled)
                     .child(label)
                     .into_any_element()
@@ -2046,10 +2082,10 @@ impl TerminalView {
                     div()
                         .id(id)
                         .h(px(row_height))
-                        .px(px(10.0))
+                        .px(px(PANE_MENU_ROW_PADDING_X))
                         .flex()
                         .items_center()
-                        .text_size(px(13.0))
+                        .text_size(px(PANE_MENU_TEXT_SIZE))
                         .text_color(text_color)
                         .when(enabled, |s| s.cursor_pointer())
                         .when(enabled, |s| s.hover(|style| style.bg(hover_bg)))
@@ -2069,13 +2105,13 @@ impl TerminalView {
                 div()
                     .id("terminal-context-menu-open-search")
                     .h(px(row_height))
-                    .px(px(10.0))
+                    .px(px(PANE_MENU_ROW_PADDING_X))
                     .flex()
                     .items_center()
                     .overflow_hidden()
                     .whitespace_nowrap()
                     .text_ellipsis()
-                    .text_size(px(13.0))
+                    .text_size(px(PANE_MENU_TEXT_SIZE))
                     .text_color(text_active)
                     .cursor_pointer()
                     .hover(|style| style.bg(hover_bg))
@@ -2095,13 +2131,13 @@ impl TerminalView {
                 div()
                     .id("terminal-context-menu-rename-pane")
                     .h(px(row_height))
-                    .px(px(10.0))
+                    .px(px(PANE_MENU_ROW_PADDING_X))
                     .flex()
                     .items_center()
                     .overflow_hidden()
                     .whitespace_nowrap()
                     .text_ellipsis()
-                    .text_size(px(13.0))
+                    .text_size(px(PANE_MENU_TEXT_SIZE))
                     .text_color(text_active)
                     .cursor_pointer()
                     .hover(|style| style.bg(hover_bg))
@@ -2131,13 +2167,13 @@ impl TerminalView {
                 div()
                     .id("terminal-context-menu-close-pane")
                     .h(px(row_height))
-                    .px(px(10.0))
+                    .px(px(PANE_MENU_ROW_PADDING_X))
                     .flex()
                     .items_center()
                     .overflow_hidden()
                     .whitespace_nowrap()
                     .text_ellipsis()
-                    .text_size(px(13.0))
+                    .text_size(px(PANE_MENU_TEXT_SIZE))
                     .text_color(text_color)
                     .when(can_close_pane, |s| s.cursor_pointer())
                     .when(can_close_pane, |s| s.hover(|style| style.bg(hover_bg)))
@@ -2161,13 +2197,13 @@ impl TerminalView {
                     div()
                         .id(id)
                         .h(px(row_height))
-                        .px(px(10.0))
+                        .px(px(PANE_MENU_ROW_PADDING_X))
                         .flex()
                         .items_center()
                         .overflow_hidden()
                         .whitespace_nowrap()
                         .text_ellipsis()
-                        .text_size(px(13.0))
+                        .text_size(px(PANE_MENU_TEXT_SIZE))
                         .text_color(text_color)
                         .when(enabled, |s| s.cursor_pointer())
                         .when(enabled, |s| s.hover(|style| style.bg(hover_bg)))
@@ -2206,13 +2242,13 @@ impl TerminalView {
                 div()
                     .id("terminal-context-menu-copy-image")
                     .h(px(row_height))
-                    .px(px(10.0))
+                    .px(px(PANE_MENU_ROW_PADDING_X))
                     .flex()
                     .items_center()
                     .overflow_hidden()
                     .whitespace_nowrap()
                     .text_ellipsis()
-                    .text_size(px(13.0))
+                    .text_size(px(PANE_MENU_TEXT_SIZE))
                     .text_color(text_active)
                     .cursor_pointer()
                     .hover(|style| style.bg(hover_bg))
@@ -2236,13 +2272,13 @@ impl TerminalView {
                         "terminal-context-menu-plugin-{plugin_id}-{command_id}"
                     )))
                     .h(px(row_height))
-                    .px(px(10.0))
+                    .px(px(PANE_MENU_ROW_PADDING_X))
                     .flex()
                     .items_center()
                     .overflow_hidden()
                     .whitespace_nowrap()
                     .text_ellipsis()
-                    .text_size(px(13.0))
+                    .text_size(px(PANE_MENU_TEXT_SIZE))
                     .text_color(text_color)
                     .when(enabled, |style| style.cursor_pointer())
                     .when(enabled, |style| style.hover(|style| style.bg(hover_bg)))
@@ -2257,6 +2293,32 @@ impl TerminalView {
                         )
                     })
                     .child(command.title)
+                    .into_any_element()
+            };
+
+            // 标签自定义指令：点击后在该窗格里执行。
+            let custom_command_item = |index: usize, name: String| {
+                div()
+                    .id(("terminal-context-menu-custom", index))
+                    .h(px(row_height))
+                    .px(px(PANE_MENU_ROW_PADDING_X))
+                    .flex()
+                    .items_center()
+                    .overflow_hidden()
+                    .whitespace_nowrap()
+                    .text_ellipsis()
+                    .text_size(px(PANE_MENU_TEXT_SIZE))
+                    .text_color(text_active)
+                    .cursor_pointer()
+                    .hover(|style| style.bg(hover_bg))
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(move |view, _event: &MouseDownEvent, _window, cx| {
+                            view.execute_pane_menu_action(PaneMenuAction::Custom(index), cx);
+                            cx.stop_propagation();
+                        }),
+                    )
+                    .child(name)
                     .into_any_element()
             };
 
@@ -2405,6 +2467,33 @@ impl TerminalView {
                                         t!("Move Pane Right"),
                                         right,
                                         PaneMenuAction::Move(NativeFocusDirection::Right),
+                                    ))
+                            })
+                            .when(!custom_commands.is_empty(), |panel| {
+                                panel
+                                    .child(
+                                        div().h(px(1.0)).my(px(3.0)).mx(px(8.0)).bg(panel_border),
+                                    )
+                                    .children(
+                                        custom_commands
+                                            .iter()
+                                            .enumerate()
+                                            .map(|(index, command)| {
+                                                custom_command_item(index, command.name.clone())
+                                            })
+                                            .collect::<Vec<_>>(),
+                                    )
+                            })
+                            .when(state.pane_actions_for.is_some(), |panel| {
+                                panel
+                                    .child(
+                                        div().h(px(1.0)).my(px(3.0)).mx(px(8.0)).bg(panel_border),
+                                    )
+                                    .child(pane_action_item(
+                                        "terminal-context-menu-edit-vars",
+                                        t!("Edit Variables"),
+                                        true,
+                                        PaneMenuAction::EditVariables,
                                     ))
                             })
                             .when(!plugin_commands.is_empty(), |panel| {
@@ -2609,7 +2698,13 @@ impl TerminalView {
                 260.0
             };
             let row_height = 30.0;
-            let content_height = (row_height * (4 + plugin_commands.len()) as f32)
+            let tab_commands = self
+                .tab_commands
+                .get(&state.tab_id)
+                .cloned()
+                .unwrap_or_default();
+            let content_height = (row_height
+                * (5 + plugin_commands.len() + tab_commands.len()) as f32)
                 + 8.0
                 + tab_colors::TAB_COLOR_MENU_HEIGHT
                 + if plugin_commands.is_empty() { 0.0 } else { 7.0 };
@@ -2857,6 +2952,61 @@ impl TerminalView {
                                     .gap(px(tab_colors::TAB_COLOR_SWATCH_GAP))
                                     .children(tab_color_swatches),
                             )
+                            // Add Custom Command
+                            .child({
+                                let tab_id = state.tab_id;
+                                div()
+                                    .id("tab-context-menu-add-command")
+                                    .h(px(row_height))
+                                    .px(px(10.0))
+                                    .flex()
+                                    .items_center()
+                                    .text_size(px(13.0))
+                                    .text_color(text_active)
+                                    .cursor_pointer()
+                                    .hover(|style| style.bg(hover_bg))
+                                    .on_mouse_down(
+                                        MouseButton::Left,
+                                        cx.listener(
+                                            move |view, _event: &MouseDownEvent, _window, cx| {
+                                                view.begin_add_tab_command(tab_id, cx);
+                                                cx.stop_propagation();
+                                            },
+                                        ),
+                                    )
+                                    .child(t!("Add Custom Command"))
+                            })
+                            // 已有的自定义指令：点击即删除
+                            .children(tab_commands.iter().enumerate().map(|(index, command)| {
+                                let tab_id = state.tab_id;
+                                div()
+                                    .id(("tab-context-menu-remove-command", index))
+                                    .h(px(row_height))
+                                    .px(px(10.0))
+                                    .flex()
+                                    .items_center()
+                                    .overflow_hidden()
+                                    .whitespace_nowrap()
+                                    .text_ellipsis()
+                                    .text_size(px(13.0))
+                                    .text_color(text_disabled)
+                                    .cursor_pointer()
+                                    .hover(|style| style.bg(hover_bg))
+                                    .on_mouse_down(
+                                        MouseButton::Left,
+                                        cx.listener(
+                                            move |view, _event: &MouseDownEvent, _window, cx| {
+                                                view.remove_tab_command(tab_id, index, cx);
+                                                let _ = view.close_tab_context_menu(cx);
+                                                cx.stop_propagation();
+                                            },
+                                        ),
+                                    )
+                                    .child(t!(
+                                        "Remove Command: {name}",
+                                        name = command.name.clone()
+                                    ))
+                            }))
                             // Pin/Unpin Tab
                             .child(
                                 div()
@@ -3000,6 +3150,9 @@ impl TerminalView {
             });
         let context_menu_overlay = self.render_terminal_context_menu_overlay(cx);
         let tab_context_menu_overlay = self.render_tab_context_menu_overlay(cx);
+        let custom_command_overlay = self
+            .render_custom_command_dialog(cx)
+            .or_else(|| self.render_var_editor_dialog(cx));
         let new_tab_menu_overlay = self.render_new_tab_menu_overlay(cx);
         let toast_overlay = self.render_toast_overlay(&colors, cx);
         let link_preview_overlay = self.render_link_preview_overlay();
@@ -3155,6 +3308,7 @@ impl TerminalView {
             .children(terminal_overlay)
             .children(context_menu_overlay)
             .children(tab_context_menu_overlay)
+            .children(custom_command_overlay)
             .children(new_tab_menu_overlay)
             .children(resize_overlay)
             .children(debug_overlay)
@@ -3219,6 +3373,8 @@ impl Render for TerminalView {
             && !release_notes_open
             && self.renaming_tab.is_none()
             && self.renaming_workspace.is_none()
+            && self.custom_command_edit.is_none()
+            && self.var_editor.is_none()
             && !self.search_open;
         let cursor_visible = terminal_cursor_active
             && self.cursor_visible_for_focus(self.focus_handle.is_focused(window));

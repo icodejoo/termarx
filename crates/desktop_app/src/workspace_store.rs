@@ -15,7 +15,7 @@ use std::path::Path;
 pub(crate) const WORKSPACE_STORE_FILE: &str = "workspaces.db";
 
 pub use termy_core::session_model::{
-    StoredPane, StoredSession, StoredTab, StoredTabPresentation, StoredWorkspace,
+    StoredPane, StoredSession, StoredTab, StoredTabCommand, StoredTabPresentation, StoredWorkspace,
 };
 
 pub(crate) struct WorkspaceStore {
@@ -43,7 +43,8 @@ CREATE TABLE IF NOT EXISTS tabs (
     manual_title TEXT,
     active_pane INTEGER NOT NULL DEFAULT 0,
     layout_tree TEXT,
-    color TEXT
+    color TEXT,
+    commands TEXT
 );
 CREATE TABLE IF NOT EXISTS panes (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -56,7 +57,8 @@ CREATE TABLE IF NOT EXISTS panes (
     buffer TEXT,
     manual_title TEXT,
     cwd TEXT,
-    reported_title TEXT
+    reported_title TEXT,
+    params TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_tabs_workspace ON tabs(workspace_id, position);
 CREATE INDEX IF NOT EXISTS idx_panes_tab ON panes(tab_id, position);
@@ -96,8 +98,15 @@ async fn ensure_workspace_columns(pool: &SqlitePool) -> Result<(), String> {
             .await
             .map_err(|error| store_error("Failed to migrate tab color", error))?;
     }
+    // 标签自定义指令列（JSON 文本），补上以兼容老数据。
+    if !table_has_column(pool, "tabs", "commands").await? {
+        sqlx::query("ALTER TABLE tabs ADD COLUMN commands TEXT")
+            .execute(pool)
+            .await
+            .map_err(|error| store_error("Failed to migrate tab commands", error))?;
+    }
     // 窗格名、路径、上报标题三列，补上以兼容老数据。
-    for column in ["manual_title", "cwd", "reported_title"] {
+    for column in ["manual_title", "cwd", "reported_title", "params"] {
         if !table_has_column(pool, "panes", column).await? {
             sqlx::query(&format!("ALTER TABLE panes ADD COLUMN {column} TEXT"))
                 .execute(pool)
@@ -188,7 +197,7 @@ impl WorkspaceStore {
                 for (tab_position, tab) in workspace.tabs.iter().enumerate() {
                     let tab_id = sqlx::query(
                         "INSERT INTO tabs(workspace_id, position, pinned, manual_title, \
-                         active_pane, layout_tree, color) VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                         active_pane, layout_tree, color, commands) VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
                     )
                     .bind(workspace_id)
                     .bind(tab_position as i64)
@@ -197,6 +206,11 @@ impl WorkspaceStore {
                     .bind(tab.active_pane as i64)
                     .bind(tab.layout_tree_json.as_deref())
                     .bind(tab.color.as_deref())
+                    .bind(
+                        (!tab.commands.is_empty())
+                            .then(|| serde_json::to_string(&tab.commands).ok())
+                            .flatten(),
+                    )
                     .execute(&mut *tx)
                     .await
                     .map_err(|error| store_error("Failed to write tab", error))?
@@ -205,8 +219,8 @@ impl WorkspaceStore {
                     for (pane_position, pane) in tab.panes.iter().enumerate() {
                         sqlx::query(
                             "INSERT INTO panes(tab_id, position, pane_left, pane_top, \
-                             pane_width, pane_height, buffer, manual_title, cwd, reported_title) \
-                             VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                             pane_width, pane_height, buffer, manual_title, cwd, reported_title, params) \
+                             VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
                         )
                         .bind(tab_id)
                         .bind(pane_position as i64)
@@ -218,6 +232,11 @@ impl WorkspaceStore {
                         .bind(pane.manual_title.as_deref())
                         .bind(pane.cwd.as_deref())
                         .bind(pane.reported_title.as_deref())
+                        .bind(
+                            (!pane.params.is_empty())
+                                .then(|| serde_json::to_string(&pane.params).ok())
+                                .flatten(),
+                        )
                         .execute(&mut *tx)
                         .await
                         .map_err(|error| store_error("Failed to write pane", error))?;
@@ -262,7 +281,7 @@ impl WorkspaceStore {
             .await
             .map_err(|error| store_error("Failed to read tabs", error))?;
             let pane_rows = sqlx::query(
-                "SELECT tab_id, pane_left, pane_top, pane_width, pane_height, buffer, manual_title, cwd, reported_title \
+                "SELECT tab_id, pane_left, pane_top, pane_width, pane_height, buffer, manual_title, cwd, reported_title, params \
                  FROM panes ORDER BY tab_id, position",
             )
             .fetch_all(&self.pool)
@@ -273,6 +292,10 @@ impl WorkspaceStore {
             for row in pane_rows {
                 let tab_id: i64 = row.get("tab_id");
                 panes_by_tab.entry(tab_id).or_default().push(StoredPane {
+                    params: row
+                        .get::<Option<String>, _>("params")
+                        .and_then(|json| serde_json::from_str(&json).ok())
+                        .unwrap_or_default(),
                     manual_title: row.get("manual_title"),
                     cwd: row.get("cwd"),
                     reported_title: row.get("reported_title"),
@@ -298,6 +321,10 @@ impl WorkspaceStore {
                     .or_default()
                     .push(StoredTab {
                         color: row.get("color"),
+                        commands: row
+                            .get::<Option<String>, _>("commands")
+                            .and_then(|json| serde_json::from_str(&json).ok())
+                            .unwrap_or_default(),
                         zoomed: false,
                         presentation: None,
                         pinned: row.get("pinned"),
@@ -515,6 +542,7 @@ mod tests {
                     active_tab: 1,
                     tabs: vec![
                         StoredTab {
+                            commands: Vec::new(),
                             color: Some("blue".to_string()),
                             zoomed: false,
                             presentation: None,
@@ -523,6 +551,7 @@ mod tests {
                             active_pane: 0,
                             layout_tree_json: None,
                             panes: vec![StoredPane {
+                                params: Default::default(),
                                 manual_title: None,
                                 cwd: None,
                                 reported_title: None,
@@ -535,6 +564,7 @@ mod tests {
                             }],
                         },
                         StoredTab {
+                            commands: Vec::new(),
                             color: None,
                             zoomed: false,
                             presentation: None,
@@ -544,6 +574,7 @@ mod tests {
                             layout_tree_json: Some("{\"kind\":\"leaf\",\"pane\":0}".to_string()),
                             panes: vec![
                                 StoredPane {
+                                    params: Default::default(),
                                     manual_title: None,
                                     cwd: None,
                                     reported_title: None,
@@ -555,6 +586,7 @@ mod tests {
                                     buffer: None,
                                 },
                                 StoredPane {
+                                    params: Default::default(),
                                     manual_title: Some("api".to_string()),
                                     cwd: Some("/work/api".to_string()),
                                     reported_title: Some("npm run dev".to_string()),
@@ -574,6 +606,7 @@ mod tests {
                     pinned: false,
                     active_tab: 0,
                     tabs: vec![StoredTab {
+                        commands: Vec::new(),
                         color: None,
                         zoomed: false,
                         presentation: None,
@@ -582,6 +615,7 @@ mod tests {
                         active_pane: 0,
                         layout_tree_json: None,
                         panes: vec![StoredPane {
+                            params: Default::default(),
                             manual_title: None,
                             cwd: None,
                             reported_title: None,

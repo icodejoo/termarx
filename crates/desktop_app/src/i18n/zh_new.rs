@@ -70,6 +70,35 @@ pub(super) const ENTRIES: &[(&str, &str)] = &[
     ("Auto", "自动"),
     ("English", "English"),
     ("中文", "中文"),
+    // 标签自定义指令
+    ("Add Custom Command", "添加自定义指令"),
+    ("Remove Command: {name}", "删除指令：{name}"),
+    ("Name", "名字"),
+    ("Command", "指令"),
+    ("Add", "添加"),
+    ("Edit Variables", "变量编辑"),
+    ("Add Row", "添加一行"),
+    ("Save", "保存"),
+    ("Name (e.g. port)", "名字（如 port）"),
+    ("Value (e.g. 8080)", "值（如 8080）"),
+    (
+        "Tab next · Enter save · Esc cancel",
+        "Tab 下一格 · Enter 保存 · Esc 取消",
+    ),
+    ("Invalid variable name: {name}", "变量名不合法：{name}"),
+    ("Variable {name} needs a value", "变量 {name} 还没填值"),
+    (
+        "Variable {name} is not set; use Edit Variables in the pane menu",
+        "变量 {name} 未设置，请在窗格菜单里用“变量编辑”添加",
+    ),
+    (
+        "Cannot resolve {name} for this pane",
+        "该窗格暂时取不到 {name}",
+    ),
+    (
+        "Tab to switch field · Enter to add · Esc to cancel",
+        "Tab 切换输入框 · Enter 添加 · Esc 取消",
+    ),
     // 重命名窗格
     ("Rename Pane", "重命名窗格"),
     ("Clear pane name", "清除窗格名称"),

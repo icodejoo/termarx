@@ -19,6 +19,8 @@ struct TransferredTab {
     zoom: Option<NativePaneZoomSnapshot>,
     /// 标签背景色。
     color: Option<tab_colors::TabColor>,
+    /// 标签自定义指令。
+    commands: Option<Vec<termy_core::session_model::StoredTabCommand>>,
     /// 窗格 id -> 侧表数据；`rebind` 换窗格 id 时跟着改键。
     pane_meta: HashMap<String, titles::source::PaneMeta>,
 }
@@ -332,6 +334,7 @@ impl TerminalView {
         let zoom = self.session.native_pane_zoom_snapshots.remove(&tab_id);
         // 标签颜色与各窗格的手动名/标题/目录跟着标签走，缩放时藏起来的窗格也要带上。
         let color = self.tab_colors.remove(&tab_id);
+        let commands = self.tab_commands.remove(&tab_id);
         let pane_meta = tab
             .panes
             .iter()
@@ -359,6 +362,7 @@ impl TerminalView {
             layout,
             zoom,
             color,
+            commands,
             pane_meta,
         })
     }
@@ -379,6 +383,9 @@ impl TerminalView {
         }
         if let Some(color) = moved.color {
             self.tab_colors.insert(id, color);
+        }
+        if let Some(commands) = moved.commands {
+            self.tab_commands.insert(id, commands);
         }
         self.pane_meta.extend(moved.pane_meta);
         self.session.tabs.push(moved.tab);
@@ -462,6 +469,7 @@ mod tests {
                             manual_title: Some("build".to_string()),
                             reported_title: Some("vim main.rs".to_string()),
                             cwd: Some("/tmp/project".to_string()),
+                            ..Default::default()
                         },
                     );
                     view.session.native_pane_layout_trees.insert(

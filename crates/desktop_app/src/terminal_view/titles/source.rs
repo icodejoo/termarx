@@ -33,12 +33,17 @@ pub(crate) struct PaneMeta {
     pub(crate) reported_title: Option<String>,
     /// shell 上报的当前目录（OSC 7 / OSC 9;9）。
     pub(crate) cwd: Option<String>,
+    /// 自定义指令的窗格级参数（占位符名 -> 值），例如 `port` -> `8080`。
+    pub(crate) params: std::collections::BTreeMap<String, String>,
 }
 
 impl PaneMeta {
-    /// 三个字段是否都为空（空条目会从侧表里移除）。
+    /// 所有字段是否都为空（空条目会从侧表里移除）。
     pub(crate) fn is_empty(&self) -> bool {
-        self.manual_title.is_none() && self.reported_title.is_none() && self.cwd.is_none()
+        self.manual_title.is_none()
+            && self.reported_title.is_none()
+            && self.cwd.is_none()
+            && self.params.is_empty()
     }
 }
 
@@ -1051,6 +1056,7 @@ mod tests {
                 manual_title: Some("build".into()),
                 reported_title: Some("vim".into()),
                 cwd: None,
+                ..PaneMeta::default()
             },
         );
         // 清掉手动名后上报标题还在，条目保留。

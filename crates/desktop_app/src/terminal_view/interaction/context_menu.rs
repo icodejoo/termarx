@@ -30,6 +30,10 @@ pub(in crate::terminal_view) enum PaneMenuAction {
     ResetTerminal,
     /// 和指定方向的相邻窗格交换位置。
     Move(NativeFocusDirection),
+    /// 执行所属标签的第 N 条自定义指令。
+    Custom(usize),
+    /// 打开该窗格的“变量编辑”窗口。
+    EditVariables,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -409,6 +413,12 @@ impl TerminalView {
             }
             PaneMenuAction::Move(direction) => {
                 self.move_pane_in_direction(pane_id.as_str(), direction, cx);
+            }
+            PaneMenuAction::Custom(index) => {
+                self.run_tab_command_in_pane(pane_id.as_str(), index, cx);
+            }
+            PaneMenuAction::EditVariables => {
+                self.begin_edit_pane_vars(pane_id.as_str(), cx);
             }
         }
     }

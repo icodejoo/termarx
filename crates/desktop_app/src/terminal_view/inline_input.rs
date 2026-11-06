@@ -42,6 +42,9 @@ enum InlineInputTarget {
     CommandPalette,
     RenameTab,
     RenameWorkspace,
+    CustomCommandName,
+    CustomCommandText,
+    VarEditor,
     Search,
 }
 
@@ -985,7 +988,10 @@ impl TerminalView {
     fn inline_input_notify_target_for_target(target: InlineInputTarget) -> InlineInputNotifyTarget {
         match target {
             InlineInputTarget::CommandPalette => InlineInputNotifyTarget::Overlay,
-            InlineInputTarget::Search => InlineInputNotifyTarget::ParentAndOverlay,
+            InlineInputTarget::Search
+            | InlineInputTarget::CustomCommandName
+            | InlineInputTarget::CustomCommandText
+            | InlineInputTarget::VarEditor => InlineInputNotifyTarget::ParentAndOverlay,
             InlineInputTarget::RenameTab | InlineInputTarget::RenameWorkspace => {
                 InlineInputNotifyTarget::Parent
             }
@@ -1020,6 +1026,15 @@ impl TerminalView {
             Some(InlineInputTarget::RenameTab)
         } else if self.renaming_workspace.is_some() {
             Some(InlineInputTarget::RenameWorkspace)
+        } else if let Some(edit) = self.custom_command_edit {
+            Some(match edit.field {
+                custom_commands::CustomCommandField::Name => InlineInputTarget::CustomCommandName,
+                custom_commands::CustomCommandField::Command => {
+                    InlineInputTarget::CustomCommandText
+                }
+            })
+        } else if self.var_editor.is_some() {
+            Some(InlineInputTarget::VarEditor)
         } else {
             None
         }
@@ -1076,6 +1091,12 @@ impl TerminalView {
             InlineInputTarget::Search => Some(&self.search_input),
             InlineInputTarget::RenameTab => Some(&self.rename_input),
             InlineInputTarget::RenameWorkspace => Some(&self.workspace_rename_input),
+            InlineInputTarget::CustomCommandName => Some(&self.custom_command_name_input),
+            InlineInputTarget::CustomCommandText => Some(&self.custom_command_text_input),
+            InlineInputTarget::VarEditor => self
+                .var_editor
+                .as_ref()
+                .map(custom_commands::VarEditor::cell),
         }
     }
 
@@ -1085,6 +1106,12 @@ impl TerminalView {
             InlineInputTarget::Search => Some(&mut self.search_input),
             InlineInputTarget::RenameTab => Some(&mut self.rename_input),
             InlineInputTarget::RenameWorkspace => Some(&mut self.workspace_rename_input),
+            InlineInputTarget::CustomCommandName => Some(&mut self.custom_command_name_input),
+            InlineInputTarget::CustomCommandText => Some(&mut self.custom_command_text_input),
+            InlineInputTarget::VarEditor => self
+                .var_editor
+                .as_mut()
+                .map(custom_commands::VarEditor::cell_mut),
         }
     }
 
@@ -1149,6 +1176,20 @@ impl TerminalView {
                 mutate(&mut self.workspace_rename_input);
                 self.enforce_workspace_rename_limit();
                 self.notify_for_inline_input_target(InlineInputTarget::RenameWorkspace, cx);
+            }
+            Some(InlineInputTarget::CustomCommandName) => {
+                mutate(&mut self.custom_command_name_input);
+                self.notify_for_inline_input_target(InlineInputTarget::CustomCommandName, cx);
+            }
+            Some(InlineInputTarget::CustomCommandText) => {
+                mutate(&mut self.custom_command_text_input);
+                self.notify_for_inline_input_target(InlineInputTarget::CustomCommandText, cx);
+            }
+            Some(InlineInputTarget::VarEditor) => {
+                if let Some(editor) = self.var_editor.as_mut() {
+                    mutate(editor.cell_mut());
+                }
+                self.notify_for_inline_input_target(InlineInputTarget::VarEditor, cx);
             }
             None => {}
         }

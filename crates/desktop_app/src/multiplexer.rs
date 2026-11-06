@@ -387,6 +387,7 @@ fn reconcile(saved: &mut SavedState, live: &[termy_core::multiplexer::PaneInfo])
         .iter()
         .filter(|pane| !referenced.contains(&pane.id))
         .map(|pane| StoredTab {
+            commands: Vec::new(),
             color: None,
             zoomed: false,
             presentation: None,
@@ -395,6 +396,7 @@ fn reconcile(saved: &mut SavedState, live: &[termy_core::multiplexer::PaneInfo])
             active_pane: 0,
             layout_tree_json: None,
             panes: vec![StoredPane {
+                params: Default::default(),
                 manual_title: None,
                 cwd: None,
                 reported_title: None,
