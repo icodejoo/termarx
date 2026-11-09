@@ -25,6 +25,7 @@ mod linux_prompt;
 #[cfg(target_os = "macos")]
 mod macos_titlebar_drag;
 mod menus;
+mod process_kill;
 mod multiplexer;
 mod settings_view;
 mod ssh;

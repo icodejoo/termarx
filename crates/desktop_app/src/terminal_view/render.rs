@@ -4590,6 +4590,7 @@ impl Render for TerminalView {
                     .on_action(cx.listener(Self::handle_zoom_out_action))
                     .on_action(cx.listener(Self::handle_zoom_reset_action))
                     .on_action(cx.listener(Self::handle_quit_action))
+                    .on_action(cx.listener(Self::handle_quit_kill_all_action))
                     .on_action(cx.listener(Self::handle_open_search_action))
                     .on_action(cx.listener(Self::handle_close_search_action))
                     .on_action(cx.listener(Self::handle_search_next_action))

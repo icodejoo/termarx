@@ -1006,6 +1006,22 @@ define_commands!(
         ))
     ),
     (
+        QuitKillAll,
+        GLOBAL_CONTEXT,
+        Some(palette(
+            "Quit and Kill All Tasks",
+            "quit exit kill terminate stop processes tasks",
+            CommandPaletteVisibility::Always
+        )),
+        Some(menu(
+            MenuRoot::App,
+            2,
+            "Quit and Kill All Tasks",
+            MenuVisibility::Always,
+            MenuActionRole::Normal
+        ))
+    ),
+    (
         ToggleCommandPalette,
         TERMINAL_CONTEXT,
         None,

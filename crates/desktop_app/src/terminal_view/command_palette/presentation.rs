@@ -53,7 +53,7 @@ pub(super) fn command_icon_path(id: CommandId) -> &'static str {
         | ToggleSearchRegex => "icons/settings/search.svg",
         CheckForUpdates => "icons/command_palette/check-update.svg",
         ViewReleaseNotes | BrowseReleaseNotes => "icons/command_palette/info.svg",
-        Quit => "icons/command_palette/power.svg",
+        Quit | QuitKillAll => "icons/command_palette/power.svg",
         ToggleCommandPalette => "icons/command_palette/command.svg",
         Copy | Paste | SelectAll => "icons/command_palette/clipboard.svg",
         ClearScreen => "icons/settings/reset.svg",
@@ -146,7 +146,7 @@ pub(super) fn command_category(id: CommandId) -> &'static str {
         SwitchTheme | ImportColors | ZoomIn | ZoomOut | ZoomReset => "Appearance",
         OpenConfig | PrettifyConfig | OpenSettings | InstallCli => "Settings",
         AppInfo | RestartApp | CheckForUpdates | ViewReleaseNotes | BrowseReleaseNotes | Quit
-        | ToggleCommandPalette | ToggleInspector => "App",
+        | QuitKillAll        | ToggleCommandPalette | ToggleInspector => "App",
     }
 }
 

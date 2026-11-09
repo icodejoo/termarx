@@ -92,6 +92,15 @@ impl TerminalView {
                 self.request_application_quit(window, cx);
                 true
             }
+            CommandAction::QuitKillAll => {
+                // 先落盘工作区布局，再杀掉全部子进程与常驻 host，最后直接退出（不再弹确认）。
+                self.sync_persisted_native_workspace();
+                let killed = crate::process_kill::kill_all_other_processes();
+                log::info!("quit and kill all tasks: terminated {killed} processes");
+                self.allow_quit_without_prompt = true;
+                cx.quit();
+                true
+            }
             CommandAction::RestartApp => {
                 match self.restart_application_with_persist() {
                     Ok(()) => {

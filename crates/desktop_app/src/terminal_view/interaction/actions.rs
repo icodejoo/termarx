@@ -173,7 +173,7 @@ impl TerminalView {
             CommandAction::BrowseReleaseNotes => {
                 self.browse_release_notes_action(cx);
             }
-            CommandAction::Quit => {
+            CommandAction::Quit | CommandAction::QuitKillAll => {
                 self.execute_quit_command_action(action, window, cx);
             }
             CommandAction::ToggleTabBarVisibility => {
@@ -871,6 +871,15 @@ impl TerminalView {
         cx: &mut Context<Self>,
     ) {
         self.execute_command_action(CommandAction::Quit, true, window, cx);
+    }
+
+    pub(in super::super) fn handle_quit_kill_all_action(
+        &mut self,
+        _: &commands::QuitKillAll,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.execute_command_action(CommandAction::QuitKillAll, true, window, cx);
     }
 
     pub(in super::super) fn handle_open_search_action(

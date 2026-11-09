@@ -63,6 +63,7 @@ macro_rules! termy_command_catalog {
             (ViewReleaseNotes, "view_release_notes"),
             (BrowseReleaseNotes, "browse_release_notes"),
             (Quit, "quit"),
+            (QuitKillAll, "quit_kill_all"),
             (ToggleCommandPalette, "toggle_command_palette"),
             (Copy, "copy"),
             (Paste, "paste"),
