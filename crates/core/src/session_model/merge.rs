@@ -188,6 +188,7 @@ mod tests {
                     layout_tree_json: None,
                     panes: vec![StoredPane {
                         params: Default::default(),
+                        path_titles: Default::default(),
                         manual_title: None,
                         cwd: None,
                         reported_title: None,

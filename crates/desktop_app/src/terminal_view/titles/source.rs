@@ -35,6 +35,8 @@ pub(crate) struct PaneMeta {
     pub(crate) cwd: Option<String>,
     /// 自定义指令的窗格级参数（占位符名 -> 值），例如 `port` -> `8080`。
     pub(crate) params: std::collections::BTreeMap<String, String>,
+    /// 路径 -> 窗格名：手动名按路径保存，shell 切换目录时标题跟着换。
+    pub(crate) path_titles: std::collections::BTreeMap<String, String>,
 }
 
 impl PaneMeta {
@@ -44,6 +46,7 @@ impl PaneMeta {
             && self.reported_title.is_none()
             && self.cwd.is_none()
             && self.params.is_empty()
+            && self.path_titles.is_empty()
     }
 }
 
@@ -343,10 +346,34 @@ impl TerminalView {
     /// 返回显示内容是否发生变化。
     pub(crate) fn record_pane_cwd(&mut self, pane_id: &str, raw: &str) -> bool {
         let cwd = Self::normalize_reported_cwd(raw);
-        if cwd.is_empty() || self.pane_cwd(pane_id) == Some(cwd.as_str()) {
+        Self::apply_pane_cwd(&mut self.pane_meta, pane_id, cwd)
+    }
+
+    /// 把已规范化的目录写入侧表，并让手动名跟着路径走，返回是否发生变化。
+    ///
+    /// - 首次拿到路径前就起了名：该名字绑定到这个路径。
+    /// - 目录变了：标题切到新路径保存的名字，没有则清空（回落成显示路径）。
+    ///
+    /// - `metas`：窗格侧表（窗格 id -> 元数据）。
+    /// - `pane_id`：目标窗格 id。
+    /// - `cwd`：规范化后的目录，空串视为无变化。
+    pub(crate) fn apply_pane_cwd(
+        metas: &mut HashMap<String, PaneMeta>,
+        pane_id: &str,
+        cwd: String,
+    ) -> bool {
+        let current = metas.get(pane_id).and_then(|meta| meta.cwd.as_deref());
+        if cwd.is_empty() || current == Some(cwd.as_str()) {
             return false;
         }
-        self.pane_meta.entry(pane_id.to_string()).or_default().cwd = Some(cwd);
+        let meta = metas.entry(pane_id.to_string()).or_default();
+        let first_report = meta.cwd.is_none();
+        meta.cwd = Some(cwd.clone());
+        if first_report && let Some(title) = meta.manual_title.clone() {
+            meta.path_titles.insert(cwd, title);
+        } else {
+            meta.manual_title = meta.path_titles.get(&cwd).cloned();
+        }
         true
     }
 
@@ -382,6 +409,9 @@ impl TerminalView {
                 return false;
             };
             let cleared = meta.manual_title.take().is_some();
+            if let Some(cwd) = meta.cwd.clone() {
+                meta.path_titles.remove(&cwd);
+            }
             if meta.is_empty() {
                 metas.remove(pane_id);
             }
@@ -390,6 +420,9 @@ impl TerminalView {
         let meta = metas.entry(pane_id.to_string()).or_default();
         if meta.manual_title.as_ref() == Some(&title) {
             return false;
+        }
+        if let Some(cwd) = meta.cwd.clone() {
+            meta.path_titles.insert(cwd, title.clone());
         }
         meta.manual_title = Some(title);
         true
@@ -1071,6 +1104,42 @@ mod tests {
         assert!(TerminalView::apply_manual_pane_title(&mut metas, "p2", "x"));
         assert!(TerminalView::apply_manual_pane_title(&mut metas, "p2", ""));
         assert!(!metas.contains_key("p2"));
+    }
+
+    #[test]
+    fn manual_pane_title_follows_cwd_changes() {
+        let mut metas = HashMap::new();
+        let cd = |metas: &mut HashMap<String, PaneMeta>, path: &str| {
+            TerminalView::apply_pane_cwd(metas, "p1", path.to_string())
+        };
+        // 先有路径再起名：名字绑定当前路径。
+        assert!(cd(&mut metas, "/a"));
+        TerminalView::apply_manual_pane_title(&mut metas, "p1", "build");
+        assert_eq!(TerminalView::resolve_pane_title(&metas, "p1"), Some("build"));
+        // 切到没起过名的目录：回落成路径。
+        assert!(cd(&mut metas, "/b"));
+        assert_eq!(TerminalView::resolve_pane_title(&metas, "p1"), None);
+        // 在新目录起名，再切回旧目录：各自的名字回来。
+        TerminalView::apply_manual_pane_title(&mut metas, "p1", "docs");
+        assert!(cd(&mut metas, "/a"));
+        assert_eq!(TerminalView::resolve_pane_title(&metas, "p1"), Some("build"));
+        assert!(cd(&mut metas, "/b"));
+        assert_eq!(TerminalView::resolve_pane_title(&metas, "p1"), Some("docs"));
+        // 清除名字只清当前路径的绑定。
+        TerminalView::apply_manual_pane_title(&mut metas, "p1", "");
+        assert!(cd(&mut metas, "/a"));
+        assert_eq!(TerminalView::resolve_pane_title(&metas, "p1"), Some("build"));
+        assert!(!cd(&mut metas, "/a"));
+    }
+
+    #[test]
+    fn manual_title_set_before_first_cwd_binds_to_that_path() {
+        let mut metas = HashMap::new();
+        TerminalView::apply_manual_pane_title(&mut metas, "p1", "build");
+        assert!(TerminalView::apply_pane_cwd(&mut metas, "p1", "/a".into()));
+        assert_eq!(TerminalView::resolve_pane_title(&metas, "p1"), Some("build"));
+        assert!(TerminalView::apply_pane_cwd(&mut metas, "p1", "/b".into()));
+        assert_eq!(TerminalView::resolve_pane_title(&metas, "p1"), None);
     }
 
     #[test]

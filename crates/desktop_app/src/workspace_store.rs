@@ -58,7 +58,8 @@ CREATE TABLE IF NOT EXISTS panes (
     manual_title TEXT,
     cwd TEXT,
     reported_title TEXT,
-    params TEXT
+    params TEXT,
+    path_titles TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_tabs_workspace ON tabs(workspace_id, position);
 CREATE INDEX IF NOT EXISTS idx_panes_tab ON panes(tab_id, position);
@@ -106,7 +107,7 @@ async fn ensure_workspace_columns(pool: &SqlitePool) -> Result<(), String> {
             .map_err(|error| store_error("Failed to migrate tab commands", error))?;
     }
     // 窗格名、路径、上报标题三列，补上以兼容老数据。
-    for column in ["manual_title", "cwd", "reported_title", "params"] {
+    for column in ["manual_title", "cwd", "reported_title", "params", "path_titles"] {
         if !table_has_column(pool, "panes", column).await? {
             sqlx::query(&format!("ALTER TABLE panes ADD COLUMN {column} TEXT"))
                 .execute(pool)
@@ -219,8 +220,8 @@ impl WorkspaceStore {
                     for (pane_position, pane) in tab.panes.iter().enumerate() {
                         sqlx::query(
                             "INSERT INTO panes(tab_id, position, pane_left, pane_top, \
-                             pane_width, pane_height, buffer, manual_title, cwd, reported_title, params) \
-                             VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                             pane_width, pane_height, buffer, manual_title, cwd, reported_title, params, path_titles) \
+                             VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
                         )
                         .bind(tab_id)
                         .bind(pane_position as i64)
@@ -235,6 +236,11 @@ impl WorkspaceStore {
                         .bind(
                             (!pane.params.is_empty())
                                 .then(|| serde_json::to_string(&pane.params).ok())
+                                .flatten(),
+                        )
+                        .bind(
+                            (!pane.path_titles.is_empty())
+                                .then(|| serde_json::to_string(&pane.path_titles).ok())
                                 .flatten(),
                         )
                         .execute(&mut *tx)
@@ -281,7 +287,7 @@ impl WorkspaceStore {
             .await
             .map_err(|error| store_error("Failed to read tabs", error))?;
             let pane_rows = sqlx::query(
-                "SELECT tab_id, pane_left, pane_top, pane_width, pane_height, buffer, manual_title, cwd, reported_title, params \
+                "SELECT tab_id, pane_left, pane_top, pane_width, pane_height, buffer, manual_title, cwd, reported_title, params, path_titles \
                  FROM panes ORDER BY tab_id, position",
             )
             .fetch_all(&self.pool)
@@ -294,6 +300,10 @@ impl WorkspaceStore {
                 panes_by_tab.entry(tab_id).or_default().push(StoredPane {
                     params: row
                         .get::<Option<String>, _>("params")
+                        .and_then(|json| serde_json::from_str(&json).ok())
+                        .unwrap_or_default(),
+                    path_titles: row
+                        .get::<Option<String>, _>("path_titles")
                         .and_then(|json| serde_json::from_str(&json).ok())
                         .unwrap_or_default(),
                     manual_title: row.get("manual_title"),
@@ -552,6 +562,7 @@ mod tests {
                             layout_tree_json: None,
                             panes: vec![StoredPane {
                                 params: Default::default(),
+                                path_titles: Default::default(),
                                 manual_title: None,
                                 cwd: None,
                                 reported_title: None,
@@ -575,6 +586,7 @@ mod tests {
                             panes: vec![
                                 StoredPane {
                                     params: Default::default(),
+                                    path_titles: Default::default(),
                                     manual_title: None,
                                     cwd: None,
                                     reported_title: None,
@@ -587,6 +599,7 @@ mod tests {
                                 },
                                 StoredPane {
                                     params: Default::default(),
+                                    path_titles: Default::default(),
                                     manual_title: Some("api".to_string()),
                                     cwd: Some("/work/api".to_string()),
                                     reported_title: Some("npm run dev".to_string()),
@@ -616,6 +629,7 @@ mod tests {
                         layout_tree_json: None,
                         panes: vec![StoredPane {
                             params: Default::default(),
+                            path_titles: Default::default(),
                             manual_title: None,
                             cwd: None,
                             reported_title: None,

@@ -47,6 +47,8 @@ struct PersistedNativePane {
     reported_title: Option<String>,
     /// 窗格级自定义指令参数。
     params: std::collections::BTreeMap<String, String>,
+    /// 路径 -> 窗格名。
+    path_titles: std::collections::BTreeMap<String, String>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -312,6 +314,7 @@ impl TerminalView {
                         .into_iter()
                         .map(|pane| StoredPane {
                             params: pane.params,
+                            path_titles: pane.path_titles,
                             manual_title: pane.manual_title,
                             cwd: pane.cwd,
                             reported_title: pane.reported_title,
@@ -362,6 +365,7 @@ impl TerminalView {
                         cwd: pane.cwd,
                         reported_title: pane.reported_title,
                         params: pane.params,
+                        path_titles: pane.path_titles,
                     })
                     .collect(),
             })
@@ -487,6 +491,9 @@ impl TerminalView {
                             cwd: meta.and_then(|meta| meta.cwd.clone()),
                             reported_title: meta.and_then(|meta| meta.reported_title.clone()),
                             params: meta.map(|meta| meta.params.clone()).unwrap_or_default(),
+                            path_titles: meta
+                                .map(|meta| meta.path_titles.clone())
+                                .unwrap_or_default(),
                         }
                     })
                     .collect::<Vec<_>>();
@@ -632,6 +639,7 @@ impl TerminalView {
                     cwd: non_blank_str(pane_value, "cwd"),
                     reported_title: non_blank_str(pane_value, "reported_title"),
                     params: Default::default(),
+                    path_titles: Default::default(),
                 });
             }
 
@@ -903,6 +911,12 @@ impl TerminalView {
             tab.manual_title = manual_title;
             // 手动窗格名、路径、上报标题按新建窗格的 id 重新映射回来。
             for (pane, persisted_pane) in tab.panes.iter().zip(persisted_tab.panes.iter()) {
+                if !persisted_pane.path_titles.is_empty() {
+                    self.pane_meta
+                        .entry(pane.id.clone())
+                        .or_default()
+                        .path_titles = persisted_pane.path_titles.clone();
+                }
                 if let Some(title) = persisted_pane.manual_title.as_deref() {
                     self.set_pane_manual_title(pane.id.as_str(), title);
                 }
@@ -1573,6 +1587,7 @@ mod tests {
                 layout_tree_json: None,
                 panes: vec![StoredPane {
                     params: Default::default(),
+                    path_titles: Default::default(),
                     manual_title: None,
                     cwd: None,
                     reported_title: None,

@@ -78,6 +78,9 @@ pub struct StoredPane {
     /// 窗格级自定义指令参数（占位符名 -> 值）；旧数据缺该字段时为空。
     #[serde(default)]
     pub params: std::collections::BTreeMap<String, String>,
+    /// 路径 -> 窗格名：窗格名按路径保存，切换目录时标题跟着换；旧数据缺该字段时为空。
+    #[serde(default)]
+    pub path_titles: std::collections::BTreeMap<String, String>,
 }
 
 /// 标签自定义指令：名字显示在窗格右上角菜单里，点击后在该窗格执行 `command`。
