@@ -274,7 +274,7 @@ impl WorkspaceStore {
             }
 
             let tab_rows = sqlx::query(
-                "SELECT id, workspace_id, pinned, manual_title, active_pane, layout_tree, color \
+                "SELECT id, workspace_id, pinned, manual_title, active_pane, layout_tree, color, commands \
                  FROM tabs ORDER BY workspace_id, position",
             )
             .fetch_all(&self.pool)
