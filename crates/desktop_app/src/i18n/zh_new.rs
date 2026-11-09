@@ -55,7 +55,7 @@ pub(super) const ENTRIES: &[(&str, &str)] = &[
     ("Switch Theme", "切换主题"),
     ("Saved Layouts", "已保存的布局"),
     ("Minimize Window", "最小化窗口"),
-    ("Quit Termarx", "退出 Termarx"),
+    ("Quit", "退出"),
     ("Kill All Tasks", "终止全部任务"),
     ("Kill Tab Tasks", "终止当前标签页任务"),
     ("Terminated {count} processes", "已终止 {count} 个进程"),

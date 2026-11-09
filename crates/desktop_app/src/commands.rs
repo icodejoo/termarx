@@ -990,22 +990,6 @@ define_commands!(
         ))
     ),
     (
-        Quit,
-        GLOBAL_CONTEXT,
-        Some(palette(
-            "Quit Termarx",
-            "quit exit close",
-            CommandPaletteVisibility::Always
-        )),
-        Some(menu(
-            MenuRoot::App,
-            2,
-            "Quit Termarx",
-            MenuVisibility::Always,
-            MenuActionRole::Normal
-        ))
-    ),
-    (
         KillAllTasks,
         TERMINAL_CONTEXT,
         Some(palette(
@@ -1017,6 +1001,22 @@ define_commands!(
             MenuRoot::App,
             2,
             "Kill All Tasks",
+            MenuVisibility::Always,
+            MenuActionRole::Normal
+        ))
+    ),
+    (
+        Quit,
+        GLOBAL_CONTEXT,
+        Some(palette(
+            "Quit",
+            "quit exit close termarx",
+            CommandPaletteVisibility::Always
+        )),
+        Some(menu(
+            MenuRoot::App,
+            2,
+            "Quit",
             MenuVisibility::Always,
             MenuActionRole::Normal
         ))
