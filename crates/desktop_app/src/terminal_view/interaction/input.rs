@@ -262,8 +262,7 @@ fn take_pending_key_release_action(
 
 impl TerminalView {
     fn overlay_owns_terminal_input(&self) -> bool {
-        self.custom_command_edit.is_some()
-            || self.var_editor.is_some()
+        self.row_editor.is_some()
             || overlay_owns_terminal_input_state(
                 self.is_command_palette_open(),
                 self.plugin_ui.is_some(),
@@ -865,15 +864,8 @@ impl TerminalView {
                 return;
             }
 
-            if self.var_editor.is_some() {
-                if self.handle_var_editor_key_down(key, cx) {
-                    self.remember_consumed_key_release(key);
-                }
-                return;
-            }
-
-            if self.custom_command_edit.is_some() {
-                if self.handle_custom_command_key_down(key, cx) {
+            if self.row_editor.is_some() {
+                if self.handle_row_editor_key_down(key, cx) {
                     self.remember_consumed_key_release(key);
                 }
                 return;

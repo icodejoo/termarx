@@ -1,5 +1,6 @@
-//! 标签自定义指令：在标签右键菜单里添加「名字 + 指令」，
-//! 该标签下所有窗格的右上角菜单都会多出名字项，点击即在该窗格里执行指令。
+//! 标签自定义指令与窗格变量：都用同一个“按行编辑”弹窗集中增删改。
+//! 标签右键菜单的“自定义指令”编辑「名字 + 指令」，该标签下所有窗格的右上角菜单都会多出名字项，
+//! 点击即在该窗格里执行指令；窗格菜单的“变量编辑”编辑「占位符名 + 值」。
 
 use super::*;
 use gpui_kit::prelude::FluentBuilder as _;
@@ -28,20 +29,35 @@ pub(super) enum Expansion {
     Unresolved(String),
 }
 
-/// 变量编辑窗口的状态：每行一对输入框（占位符名、值），同一时刻只有一个格子拿着输入焦点。
+/// 行编辑窗口编辑的对象。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) enum RowEditorKind {
+    /// 某个窗格的变量（名字 + 值）。
+    PaneVars {
+        /// 窗格 id。
+        pane_id: String,
+    },
+    /// 某个标签的自定义指令（名字 + 指令）。
+    TabCommands {
+        /// 标签 id。
+        tab_id: TabId,
+    },
+}
+
+/// 行编辑窗口的状态：每行一对输入框，同一时刻只有一个格子拿着输入焦点。
 #[derive(Clone, Debug)]
-pub(super) struct VarEditor {
-    /// 正在编辑哪个窗格的变量。
-    pub(super) pane_id: String,
+pub(super) struct RowEditor {
+    /// 正在编辑什么。
+    pub(super) kind: RowEditorKind,
     /// 所有行；至少保留一行。
     pub(super) rows: Vec<[InlineInputState; 2]>,
     /// 当前聚焦的行。
     pub(super) row: usize,
-    /// 当前聚焦的列：0 = 名字，1 = 值。
+    /// 当前聚焦的列：0 = 名字，1 = 值（或指令）。
     pub(super) col: usize,
 }
 
-impl VarEditor {
+impl RowEditor {
     /// 当前聚焦格子的输入状态。
     pub(super) fn cell(&self) -> &InlineInputState {
         &self.rows[self.row][self.col]
@@ -93,6 +109,35 @@ pub(super) fn normalize_var_rows(
             return Err(VarRowError::EmptyValue(name.to_string()));
         }
         out.insert(name.to_string(), value.to_string());
+    }
+    Ok(out)
+}
+
+/// 指令行校验失败的原因。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) enum CommandRowError {
+    /// 填了指令但名字为空。
+    MissingName,
+    /// 填了名字但指令为空（带上名字方便提示）。
+    MissingCommand(String),
+}
+
+/// 把编辑窗口的各行（名字、指令）规整成指令列表，保持行序。
+///
+/// 名字、指令都空的行直接忽略；只填了一半的行报错。单行的规整规则见 [`normalize_tab_command`]。
+pub(super) fn normalize_command_rows(
+    rows: &[(String, String)],
+) -> Result<Vec<StoredTabCommand>, CommandRowError> {
+    let mut out = Vec::new();
+    for (name, command) in rows {
+        if name.trim().is_empty() && command.trim().is_empty() {
+            continue;
+        }
+        match normalize_tab_command(name, command) {
+            Some(entry) => out.push(entry),
+            None if name.trim().is_empty() => return Err(CommandRowError::MissingName),
+            None => return Err(CommandRowError::MissingCommand(name.trim().to_string())),
+        }
     }
     Ok(out)
 }
@@ -158,24 +203,6 @@ pub(super) fn expand_command_template(
     }
     out.push_str(&template[last..]);
     Expansion::Ready(out)
-}
-
-/// 对话框里当前获得焦点的输入框。
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum CustomCommandField {
-    /// 名字输入框。
-    Name,
-    /// 指令输入框。
-    Command,
-}
-
-/// “新增自定义指令”对话框的状态。
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) struct CustomCommandEdit {
-    /// 指令要加到哪个标签。
-    pub(super) tab_id: TabId,
-    /// 当前聚焦的输入框。
-    pub(super) field: CustomCommandField,
 }
 
 /// 把输入框里的原始文本规整成一条指令；名字或指令为空（去空白后）返回 `None`。
@@ -270,16 +297,7 @@ impl TerminalView {
     ///
     /// - `pane_id`：要编辑变量的窗格。
     pub(super) fn begin_edit_pane_vars(&mut self, pane_id: &str, cx: &mut Context<Self>) {
-        if self.is_command_palette_open() {
-            self.close_command_palette(cx);
-        }
-        if self.search_open {
-            self.close_search(cx);
-        }
-        self.cancel_rename_tab(cx);
-        self.cancel_rename_workspace(cx);
-        let _ = self.cancel_add_tab_command(cx);
-        let mut rows: Vec<[InlineInputState; 2]> = self
+        let rows: Vec<[InlineInputState; 2]> = self
             .pane_meta
             .get(pane_id)
             .map(|meta| {
@@ -294,14 +312,62 @@ impl TerminalView {
                     .collect()
             })
             .unwrap_or_default();
+        self.open_row_editor(
+            RowEditorKind::PaneVars {
+                pane_id: pane_id.to_owned(),
+            },
+            rows,
+            cx,
+        );
+    }
+
+    /// 打开“自定义指令”窗口：每行一对（名字、指令），预填该标签已有的指令。
+    ///
+    /// - `tab_id`：要编辑指令的标签。
+    pub(super) fn begin_edit_tab_commands(&mut self, tab_id: TabId, cx: &mut Context<Self>) {
+        let _ = self.close_terminal_context_menu(cx);
+        let _ = self.close_tab_context_menu(cx);
+        let rows = self
+            .tab_commands
+            .get(&tab_id)
+            .map(|commands| {
+                commands
+                    .iter()
+                    .map(|entry| {
+                        [
+                            InlineInputState::new(entry.name.clone()),
+                            InlineInputState::new(entry.command.clone()),
+                        ]
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        self.open_row_editor(RowEditorKind::TabCommands { tab_id }, rows, cx);
+    }
+
+    /// 关掉其它抢输入的浮层并打开行编辑窗口；`rows` 为空时补一个空行。
+    fn open_row_editor(
+        &mut self,
+        kind: RowEditorKind,
+        mut rows: Vec<[InlineInputState; 2]>,
+        cx: &mut Context<Self>,
+    ) {
+        if self.is_command_palette_open() {
+            self.close_command_palette(cx);
+        }
+        if self.search_open {
+            self.close_search(cx);
+        }
+        self.cancel_rename_tab(cx);
+        self.cancel_rename_workspace(cx);
         if rows.is_empty() {
             rows.push([
                 InlineInputState::new(String::new()),
                 InlineInputState::new(String::new()),
             ]);
         }
-        self.var_editor = Some(VarEditor {
-            pane_id: pane_id.to_owned(),
+        self.row_editor = Some(RowEditor {
+            kind,
             rows,
             row: 0,
             col: 0,
@@ -313,8 +379,8 @@ impl TerminalView {
     }
 
     /// 关闭变量编辑窗口（不保存）；返回此前是否开着。
-    pub(super) fn cancel_var_editor(&mut self, cx: &mut Context<Self>) -> bool {
-        let was_open = self.var_editor.take().is_some();
+    pub(super) fn cancel_row_editor(&mut self, cx: &mut Context<Self>) -> bool {
+        let was_open = self.row_editor.take().is_some();
         if was_open {
             self.inline_input_selecting = false;
             self.notify_overlay(cx);
@@ -327,8 +393,8 @@ impl TerminalView {
     ///
     /// - `row`：行号；超出范围时忽略。
     /// - `col`：0 = 名字，1 = 值。
-    pub(super) fn focus_var_cell(&mut self, row: usize, col: usize, cx: &mut Context<Self>) {
-        let Some(editor) = self.var_editor.as_mut() else {
+    pub(super) fn focus_row_cell(&mut self, row: usize, col: usize, cx: &mut Context<Self>) {
+        let Some(editor) = self.row_editor.as_mut() else {
             return;
         };
         if row >= editor.rows.len() || col > 1 || (editor.row == row && editor.col == col) {
@@ -342,8 +408,8 @@ impl TerminalView {
     }
 
     /// 末尾追加一个空行并聚焦它的名字格。
-    pub(super) fn add_var_row(&mut self, cx: &mut Context<Self>) {
-        let Some(editor) = self.var_editor.as_mut() else {
+    pub(super) fn add_editor_row(&mut self, cx: &mut Context<Self>) {
+        let Some(editor) = self.row_editor.as_mut() else {
             return;
         };
         editor.rows.push([
@@ -360,8 +426,8 @@ impl TerminalView {
     /// 删除一行；只剩最后一行时改为清空它。
     ///
     /// - `index`：行号。
-    pub(super) fn remove_var_row(&mut self, index: usize, cx: &mut Context<Self>) {
-        let Some(editor) = self.var_editor.as_mut() else {
+    pub(super) fn remove_editor_row(&mut self, index: usize, cx: &mut Context<Self>) {
+        let Some(editor) = self.row_editor.as_mut() else {
             return;
         };
         if index >= editor.rows.len() {
@@ -384,9 +450,9 @@ impl TerminalView {
         cx.notify();
     }
 
-    /// 保存窗口里的全部变量（整体替换该窗格原有的变量）并关闭；校验失败时提示并保持打开。
-    pub(super) fn commit_var_editor(&mut self, cx: &mut Context<Self>) {
-        let Some(editor) = self.var_editor.as_ref() else {
+    /// 保存窗口里的全部行（整体替换原有的变量或指令）并关闭；校验失败时提示并保持打开。
+    pub(super) fn commit_row_editor(&mut self, cx: &mut Context<Self>) {
+        let Some(editor) = self.row_editor.as_ref() else {
             return;
         };
         let rows: Vec<(String, String)> = editor
@@ -394,21 +460,33 @@ impl TerminalView {
             .iter()
             .map(|row| (row[0].text().to_string(), row[1].text().to_string()))
             .collect();
-        let pane_id = editor.pane_id.clone();
-        match normalize_var_rows(&rows) {
+        match editor.kind.clone() {
+            RowEditorKind::PaneVars { pane_id } => self.commit_pane_vars(&pane_id, &rows, cx),
+            RowEditorKind::TabCommands { tab_id } => self.commit_tab_commands(tab_id, &rows, cx),
+        }
+    }
+
+    /// 保存窗格变量：校验通过就整体替换并关窗口，否则提示原因。
+    fn commit_pane_vars(
+        &mut self,
+        pane_id: &str,
+        rows: &[(String, String)],
+        cx: &mut Context<Self>,
+    ) {
+        match normalize_var_rows(rows) {
             Ok(params) => {
                 if params.is_empty() {
-                    if let Some(meta) = self.pane_meta.get_mut(&pane_id) {
+                    if let Some(meta) = self.pane_meta.get_mut(pane_id) {
                         meta.params.clear();
                         if meta.is_empty() {
-                            self.pane_meta.remove(&pane_id);
+                            self.pane_meta.remove(pane_id);
                         }
                     }
                 } else {
-                    self.pane_meta.entry(pane_id).or_default().params = params;
+                    self.pane_meta.entry(pane_id.to_owned()).or_default().params = params;
                 }
                 self.schedule_persist_native_workspace(cx);
-                let _ = self.cancel_var_editor(cx);
+                let _ = self.cancel_row_editor(cx);
             }
             Err(VarRowError::InvalidName(name)) => {
                 crate::ui::toast::error(t!("Invalid variable name: {name}", name = name));
@@ -421,44 +499,76 @@ impl TerminalView {
         }
     }
 
+    /// 保存标签自定义指令：校验通过就整体替换并关窗口，否则提示原因。
+    fn commit_tab_commands(
+        &mut self,
+        tab_id: TabId,
+        rows: &[(String, String)],
+        cx: &mut Context<Self>,
+    ) {
+        match normalize_command_rows(rows) {
+            Ok(commands) => {
+                // 标签在窗口打开期间被关掉时不再写回，避免留下孤儿数据。
+                if self.tab_index_by_id(tab_id).is_some() {
+                    if commands.is_empty() {
+                        self.tab_commands.remove(&tab_id);
+                    } else {
+                        self.tab_commands.insert(tab_id, commands);
+                    }
+                    self.schedule_persist_native_workspace(cx);
+                }
+                let _ = self.cancel_row_editor(cx);
+            }
+            Err(CommandRowError::MissingName) => {
+                crate::ui::toast::error(t!("Command needs a name"));
+                self.notify_overlay(cx);
+            }
+            Err(CommandRowError::MissingCommand(name)) => {
+                crate::ui::toast::error(t!("Command {name} needs a command", name = name));
+                self.notify_overlay(cx);
+            }
+        }
+    }
+
     /// 变量编辑窗口的按键：Enter 保存、Esc 取消、Tab 下一格（末格再按 Tab 新增一行）、上下键换行。
     ///
     /// - `key`：按键名（小写）。返回是否消费了该键。
-    pub(super) fn handle_var_editor_key_down(&mut self, key: &str, cx: &mut Context<Self>) -> bool {
+    pub(super) fn handle_row_editor_key_down(&mut self, key: &str, cx: &mut Context<Self>) -> bool {
         let Some((row, col, rows)) = self
-            .var_editor
+            .row_editor
             .as_ref()
             .map(|editor| (editor.row, editor.col, editor.rows.len()))
         else {
             return false;
         };
         match key {
-            "enter" => self.commit_var_editor(cx),
+            "enter" => self.commit_row_editor(cx),
             "escape" => {
-                let _ = self.cancel_var_editor(cx);
+                let _ = self.cancel_row_editor(cx);
             }
             "tab" => {
                 if col == 0 {
-                    self.focus_var_cell(row, 1, cx);
+                    self.focus_row_cell(row, 1, cx);
                 } else if row + 1 < rows {
-                    self.focus_var_cell(row + 1, 0, cx);
+                    self.focus_row_cell(row + 1, 0, cx);
                 } else {
-                    self.add_var_row(cx);
+                    self.add_editor_row(cx);
                 }
             }
-            "up" if row > 0 => self.focus_var_cell(row - 1, col, cx),
-            "down" if row + 1 < rows => self.focus_var_cell(row + 1, col, cx),
+            "up" if row > 0 => self.focus_row_cell(row - 1, col, cx),
+            "down" if row + 1 < rows => self.focus_row_cell(row + 1, col, cx),
             _ => return false,
         }
         true
     }
 
     /// 渲染“变量编辑”窗口：每行两个输入框（占位符名、值）加删除钮，底部有“添加一行”和“保存”。
-    pub(super) fn render_var_editor_dialog(
+    pub(super) fn render_row_editor_dialog(
         &mut self,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
-        let editor = self.var_editor.as_ref()?;
+        let editor = self.row_editor.as_ref()?;
+        let is_commands = matches!(editor.kind, RowEditorKind::TabCommands { .. });
         let focus = (editor.row, editor.col);
         let texts: Vec<[String; 2]> = editor
             .rows
@@ -485,10 +595,11 @@ impl TerminalView {
             for (col, text) in pair.into_iter().enumerate() {
                 let focused = focus == (row, col);
                 let empty = text.is_empty();
-                let placeholder: SharedString = if col == 0 {
-                    t!("Name (e.g. port)").into()
-                } else {
-                    t!("Value (e.g. 8080)").into()
+                let placeholder: SharedString = match (is_commands, col) {
+                    (true, 0) => t!("Name (e.g. build)").into(),
+                    (true, _) => t!("Command (e.g. cargo build)").into(),
+                    (false, 0) => t!("Name (e.g. port)").into(),
+                    (false, _) => t!("Value (e.g. 8080)").into(),
                 };
                 let inner: AnyElement = if focused {
                     div()
@@ -516,7 +627,7 @@ impl TerminalView {
                         .into_any_element()
                 };
                 let cell = div()
-                    .id(("var-editor-cell", row * 2 + col))
+                    .id(("row-editor-cell", row * 2 + col))
                     .relative()
                     .h(px(DIALOG_INPUT_HEIGHT))
                     .px(px(8.0))
@@ -525,13 +636,13 @@ impl TerminalView {
                     .border_1()
                     .border_color(if focused { active_border } else { panel_border })
                     .overflow_hidden()
-                    .when(col == 0, |s| s.w(px(130.0)).flex_none())
+                    .when(col == 0, |s| s.w(px(DIALOG_NAME_WIDTH)).flex_none())
                     .when(col == 1, |s| s.flex_1().min_w(px(0.0)))
                     .when(!focused, |s| {
                         s.cursor(gpui_kit::CursorStyle::IBeam).on_mouse_down(
                             MouseButton::Left,
                             cx.listener(move |view, _event: &MouseDownEvent, _window, cx| {
-                                view.focus_var_cell(row, col, cx);
+                                view.focus_row_cell(row, col, cx);
                                 cx.stop_propagation();
                             }),
                         )
@@ -562,7 +673,7 @@ impl TerminalView {
                     .children(cells)
                     .child(
                         div()
-                            .id(("var-editor-remove", row))
+                            .id(("row-editor-remove", row))
                             .flex_none()
                             .w(px(DIALOG_INPUT_HEIGHT))
                             .h(px(DIALOG_INPUT_HEIGHT))
@@ -577,7 +688,7 @@ impl TerminalView {
                             .on_mouse_down(
                                 MouseButton::Left,
                                 cx.listener(move |view, _event: &MouseDownEvent, _window, cx| {
-                                    view.remove_var_row(row, cx);
+                                    view.remove_editor_row(row, cx);
                                     cx.stop_propagation();
                                 }),
                             )
@@ -606,7 +717,7 @@ impl TerminalView {
 
         Some(
             div()
-                .id("var-editor-overlay")
+                .id("row-editor-overlay")
                 .absolute()
                 .top_0()
                 .left_0()
@@ -619,13 +730,13 @@ impl TerminalView {
                 .on_mouse_down(
                     MouseButton::Left,
                     cx.listener(|view, _event: &MouseDownEvent, _window, cx| {
-                        let _ = view.cancel_var_editor(cx);
+                        let _ = view.cancel_row_editor(cx);
                         cx.stop_propagation();
                     }),
                 )
                 .child(
                     div()
-                        .id("var-editor-panel")
+                        .id("row-editor-panel")
                         .occlude()
                         .w(px(DIALOG_WIDTH))
                         .px(px(10.0))
@@ -644,15 +755,16 @@ impl TerminalView {
                                 cx.stop_propagation();
                             }),
                         )
+                        .child(div().text_size(px(11.0)).text_color(text_muted).child(
+                            if is_commands {
+                                t!("Custom Commands")
+                            } else {
+                                t!("Edit Variables")
+                            },
+                        ))
                         .child(
                             div()
-                                .text_size(px(11.0))
-                                .text_color(text_muted)
-                                .child(t!("Edit Variables")),
-                        )
-                        .child(
-                            div()
-                                .id("var-editor-rows")
+                                .id("row-editor-rows")
                                 .flex()
                                 .flex_col()
                                 .gap(px(6.0))
@@ -666,20 +778,20 @@ impl TerminalView {
                                 .items_center()
                                 .gap(px(6.0))
                                 .child(
-                                    button("var-editor-add", t!("Add Row").into()).on_mouse_down(
+                                    button("row-editor-add", t!("Add Row").into()).on_mouse_down(
                                         MouseButton::Left,
                                         cx.listener(
                                             |view, _event: &MouseDownEvent, _window, cx| {
-                                                view.add_var_row(cx);
+                                                view.add_editor_row(cx);
                                                 cx.stop_propagation();
                                             },
                                         ),
                                     ),
                                 )
-                                .child(button("var-editor-save", t!("Save").into()).on_mouse_down(
+                                .child(button("row-editor-save", t!("Save").into()).on_mouse_down(
                                     MouseButton::Left,
                                     cx.listener(|view, _event: &MouseDownEvent, _window, cx| {
-                                        view.commit_var_editor(cx);
+                                        view.commit_row_editor(cx);
                                         cx.stop_propagation();
                                     }),
                                 ))
@@ -693,342 +805,6 @@ impl TerminalView {
                                             t!("Tab next · Enter save · Esc cancel")
                                         )),
                                 ),
-                        ),
-                )
-                .into_any_element(),
-        )
-    }
-
-    /// 打开“新增自定义指令”对话框，先关掉其它会抢输入的浮层。
-    ///
-    /// - `tab_id`：指令要加到的标签。
-    pub(super) fn begin_add_tab_command(&mut self, tab_id: TabId, cx: &mut Context<Self>) {
-        if self.is_command_palette_open() {
-            self.close_command_palette(cx);
-        }
-        if self.search_open {
-            self.close_search(cx);
-        }
-        self.cancel_rename_tab(cx);
-        self.cancel_rename_workspace(cx);
-        let _ = self.close_terminal_context_menu(cx);
-        let _ = self.close_tab_context_menu(cx);
-        self.custom_command_name_input.clear();
-        self.custom_command_text_input.clear();
-        self.custom_command_edit = Some(CustomCommandEdit {
-            tab_id,
-            field: CustomCommandField::Name,
-        });
-        self.inline_input_selecting = false;
-        self.reset_cursor_blink_phase();
-        self.notify_overlay(cx);
-        cx.notify();
-    }
-
-    /// 关闭对话框并清空两个输入框；返回对话框此前是否开着。
-    pub(super) fn cancel_add_tab_command(&mut self, cx: &mut Context<Self>) -> bool {
-        let was_open = self.custom_command_edit.take().is_some();
-        let had_text = !self.custom_command_name_input.text().is_empty()
-            || !self.custom_command_text_input.text().is_empty();
-        self.custom_command_name_input.clear();
-        self.custom_command_text_input.clear();
-        self.inline_input_selecting = false;
-        if was_open || had_text {
-            self.reset_cursor_blink_phase();
-            self.notify_overlay(cx);
-            cx.notify();
-        }
-        was_open
-    }
-
-    /// 切换到另一个输入框（Tab 键或点击输入框）。
-    ///
-    /// - `field`：要聚焦的输入框。
-    pub(super) fn focus_custom_command_field(
-        &mut self,
-        field: CustomCommandField,
-        cx: &mut Context<Self>,
-    ) {
-        let Some(edit) = self.custom_command_edit.as_mut() else {
-            return;
-        };
-        if edit.field == field {
-            return;
-        }
-        edit.field = field;
-        self.reset_cursor_blink_phase();
-        self.notify_overlay(cx);
-        cx.notify();
-    }
-
-    /// 回车：两个输入框都填好就保存；否则跳到还没填的那个。
-    pub(super) fn commit_add_tab_command(&mut self, cx: &mut Context<Self>) {
-        let Some(edit) = self.custom_command_edit else {
-            return;
-        };
-        let name = self.custom_command_name_input.text().to_string();
-        let command = self.custom_command_text_input.text().to_string();
-        let Some(entry) = normalize_tab_command(&name, &command) else {
-            let missing = if name.trim().is_empty() {
-                CustomCommandField::Name
-            } else {
-                CustomCommandField::Command
-            };
-            self.focus_custom_command_field(missing, cx);
-            return;
-        };
-        if self.tab_index_by_id(edit.tab_id).is_some() {
-            self.tab_commands
-                .entry(edit.tab_id)
-                .or_default()
-                .push(entry);
-            self.schedule_persist_native_workspace(cx);
-        }
-        let _ = self.cancel_add_tab_command(cx);
-    }
-
-    /// 删除标签的第 `index` 条自定义指令。
-    ///
-    /// - `tab_id`：标签 id。
-    /// - `index`：指令序号。
-    pub(super) fn remove_tab_command(
-        &mut self,
-        tab_id: TabId,
-        index: usize,
-        cx: &mut Context<Self>,
-    ) {
-        let Some(commands) = self.tab_commands.get_mut(&tab_id) else {
-            return;
-        };
-        if index >= commands.len() {
-            return;
-        }
-        commands.remove(index);
-        if commands.is_empty() {
-            self.tab_commands.remove(&tab_id);
-        }
-        self.schedule_persist_native_workspace(cx);
-        cx.notify();
-    }
-
-    /// 对话框里按键的处理：Enter 保存、Esc 取消、Tab 切换输入框。返回是否已消费该键。
-    ///
-    /// - `key`：按键名（小写）。
-    pub(super) fn handle_custom_command_key_down(
-        &mut self,
-        key: &str,
-        cx: &mut Context<Self>,
-    ) -> bool {
-        let Some(edit) = self.custom_command_edit else {
-            return false;
-        };
-        match key {
-            "enter" => self.commit_add_tab_command(cx),
-            "escape" => {
-                let _ = self.cancel_add_tab_command(cx);
-            }
-            "tab" => {
-                let next = match edit.field {
-                    CustomCommandField::Name => CustomCommandField::Command,
-                    CustomCommandField::Command => CustomCommandField::Name,
-                };
-                self.focus_custom_command_field(next, cx);
-            }
-            _ => return false,
-        }
-        true
-    }
-
-    /// 渲染“新增自定义指令”对话框：一行两个输入框（名字、指令）加一个确定按钮。
-    pub(super) fn render_custom_command_dialog(
-        &mut self,
-        cx: &mut Context<Self>,
-    ) -> Option<AnyElement> {
-        let edit = self.custom_command_edit?;
-        let overlay_style = self.overlay_style();
-        let panel_bg = overlay_style.chrome_panel_background(0.98);
-        let panel_border = overlay_style.chrome_panel_neutral(0.22);
-        let text_strong = overlay_style.panel_foreground(0.95);
-        let text_muted = overlay_style.panel_foreground(0.5);
-        let input_bg = overlay_style.panel_foreground(0.06);
-        let active_border = overlay_style.chrome_panel_cursor(0.9);
-        let hover_bg = overlay_style.chrome_panel_cursor(0.22);
-        let selection = overlay_style.chrome_panel_cursor(0.35);
-        let font = Font {
-            family: self.ui_font_family.clone(),
-            ..gpui_kit::font("")
-        };
-
-        // 单个输入框：聚焦的那个挂真正的输入层，另一个只显示文字，点击即切换。
-        let mut field_box = |id: &'static str,
-                             field: CustomCommandField,
-                             placeholder: SharedString,
-                             text: String| {
-            let focused = edit.field == field;
-            let empty = text.is_empty();
-            let inner: AnyElement = if focused {
-                div()
-                    .relative()
-                    .size_full()
-                    .child(self.render_inline_input_layer(
-                        font.clone(),
-                        px(12.0),
-                        text_strong.into(),
-                        selection.into(),
-                        InlineInputAlignment::Left,
-                        cx,
-                    ))
-                    .into_any_element()
-            } else {
-                div()
-                    .size_full()
-                    .flex()
-                    .items_center()
-                    .text_size(px(12.0))
-                    .text_color(text_strong)
-                    .overflow_hidden()
-                    .whitespace_nowrap()
-                    .child(text)
-                    .into_any_element()
-            };
-            div()
-                .id(id)
-                .relative()
-                .h(px(DIALOG_INPUT_HEIGHT))
-                .px(px(8.0))
-                .rounded(px(5.0))
-                .bg(input_bg)
-                .border_1()
-                .border_color(if focused { active_border } else { panel_border })
-                .overflow_hidden()
-                .when(!focused, |s| {
-                    s.cursor(gpui_kit::CursorStyle::IBeam).on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(move |view, _event: &MouseDownEvent, _window, cx| {
-                            view.focus_custom_command_field(field, cx);
-                            cx.stop_propagation();
-                        }),
-                    )
-                })
-                .when(empty, |s| {
-                    s.child(
-                        div()
-                            .absolute()
-                            .left(px(8.0))
-                            .top_0()
-                            .bottom_0()
-                            .flex()
-                            .items_center()
-                            .text_size(px(12.0))
-                            .text_color(text_muted)
-                            .child(placeholder),
-                    )
-                })
-                .child(inner)
-        };
-
-        let name_box = field_box(
-            "custom-command-name",
-            CustomCommandField::Name,
-            t!("Name").into(),
-            self.custom_command_name_input.text().to_string(),
-        )
-        .w(px(DIALOG_NAME_WIDTH))
-        .flex_none();
-        let command_box = field_box(
-            "custom-command-text",
-            CustomCommandField::Command,
-            t!("Command").into(),
-            self.custom_command_text_input.text().to_string(),
-        )
-        .flex_1()
-        .min_w(px(0.0));
-
-        Some(
-            div()
-                .id("custom-command-overlay")
-                .absolute()
-                .top_0()
-                .left_0()
-                .right_0()
-                .bottom_0()
-                .flex()
-                .justify_center()
-                .items_start()
-                .pt(px(90.0))
-                .on_mouse_down(
-                    MouseButton::Left,
-                    cx.listener(|view, _event: &MouseDownEvent, _window, cx| {
-                        let _ = view.cancel_add_tab_command(cx);
-                        cx.stop_propagation();
-                    }),
-                )
-                .child(
-                    div()
-                        .id("custom-command-panel")
-                        .occlude()
-                        .w(px(DIALOG_WIDTH))
-                        .px(px(10.0))
-                        .py(px(8.0))
-                        .flex()
-                        .flex_col()
-                        .gap(px(6.0))
-                        .bg(panel_bg)
-                        .border_1()
-                        .border_color(panel_border)
-                        .rounded(px(8.0))
-                        .shadow_lg()
-                        .on_mouse_down(
-                            MouseButton::Left,
-                            cx.listener(|_view, _event: &MouseDownEvent, _window, cx| {
-                                cx.stop_propagation();
-                            }),
-                        )
-                        .child(
-                            div()
-                                .text_size(px(11.0))
-                                .text_color(text_muted)
-                                .child(t!("Add Custom Command")),
-                        )
-                        .child(
-                            div()
-                                .flex()
-                                .items_center()
-                                .gap(px(6.0))
-                                .child(name_box)
-                                .child(command_box)
-                                .child(
-                                    div()
-                                        .id("custom-command-confirm")
-                                        .flex_none()
-                                        .h(px(DIALOG_INPUT_HEIGHT))
-                                        .px(px(12.0))
-                                        .flex()
-                                        .items_center()
-                                        .rounded(px(5.0))
-                                        .border_1()
-                                        .border_color(panel_border)
-                                        .text_size(px(12.0))
-                                        .text_color(text_strong)
-                                        .cursor_pointer()
-                                        .hover(|style| style.bg(hover_bg))
-                                        .on_mouse_down(
-                                            MouseButton::Left,
-                                            cx.listener(
-                                                |view, _event: &MouseDownEvent, _window, cx| {
-                                                    view.commit_add_tab_command(cx);
-                                                    cx.stop_propagation();
-                                                },
-                                            ),
-                                        )
-                                        .child(t!("Add")),
-                                ),
-                        )
-                        .child(
-                            div()
-                                .text_size(px(10.5))
-                                .text_color(text_muted)
-                                .child(t!("Tab to switch field · Enter to add · Esc to cancel")),
                         ),
                 )
                 .into_any_element(),
@@ -1149,6 +925,48 @@ mod tests {
         assert_eq!(
             normalize_var_rows(&rows(&[("port", " ")])),
             Err(VarRowError::EmptyValue("port".to_string()))
+        );
+    }
+
+    #[test]
+    fn command_rows_skip_blank_and_keep_order() {
+        let got = normalize_command_rows(&rows(&[
+            ("build", "cargo build"),
+            ("", ""),
+            (
+                "  test ",
+                " cargo test 
+ --all ",
+            ),
+        ]))
+        .unwrap();
+        let pairs: Vec<_> = got
+            .iter()
+            .map(|c| (c.name.as_str(), c.command.as_str()))
+            .collect();
+        assert_eq!(
+            pairs,
+            vec![("build", "cargo build"), ("test", "cargo test --all")]
+        );
+    }
+
+    #[test]
+    fn command_rows_all_blank_clears_list() {
+        assert_eq!(
+            normalize_command_rows(&rows(&[("", ""), (" ", " ")])),
+            Ok(Vec::new())
+        );
+    }
+
+    #[test]
+    fn command_rows_reject_half_filled_rows() {
+        assert_eq!(
+            normalize_command_rows(&rows(&[("", "ls")])),
+            Err(CommandRowError::MissingName)
+        );
+        assert_eq!(
+            normalize_command_rows(&rows(&[("ls", " ")])),
+            Err(CommandRowError::MissingCommand("ls".to_string()))
         );
     }
 

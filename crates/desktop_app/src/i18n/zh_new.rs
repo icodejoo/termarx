@@ -74,11 +74,11 @@ pub(super) const ENTRIES: &[(&str, &str)] = &[
     ("English", "English"),
     ("中文", "中文"),
     // 标签自定义指令
-    ("Add Custom Command", "添加自定义指令"),
-    ("Remove Command: {name}", "删除指令：{name}"),
-    ("Name", "名字"),
-    ("Command", "指令"),
-    ("Add", "添加"),
+    ("Custom Commands", "自定义指令"),
+    ("Name (e.g. build)", "名字（如 build）"),
+    ("Command (e.g. cargo build)", "指令（如 cargo build）"),
+    ("Command needs a name", "有一条指令还没填名字"),
+    ("Command {name} needs a command", "指令“{name}”还没填内容"),
     ("Edit Variables", "变量编辑"),
     ("Add Row", "添加一行"),
     ("Save", "保存"),
@@ -97,10 +97,6 @@ pub(super) const ENTRIES: &[(&str, &str)] = &[
     (
         "Cannot resolve {name} for this pane",
         "该窗格暂时取不到 {name}",
-    ),
-    (
-        "Tab to switch field · Enter to add · Esc to cancel",
-        "Tab 切换输入框 · Enter 添加 · Esc 取消",
     ),
     // 重命名窗格
     ("Rename Pane", "重命名窗格"),

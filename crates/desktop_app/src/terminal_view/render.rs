@@ -2698,13 +2698,7 @@ impl TerminalView {
                 260.0
             };
             let row_height = 30.0;
-            let tab_commands = self
-                .tab_commands
-                .get(&state.tab_id)
-                .cloned()
-                .unwrap_or_default();
-            let content_height = (row_height
-                * (6 + plugin_commands.len() + tab_commands.len()) as f32)
+            let content_height = (row_height * (6 + plugin_commands.len()) as f32)
                 + 8.0
                 + tab_colors::TAB_COLOR_MENU_HEIGHT
                 + if plugin_commands.is_empty() { 0.0 } else { 7.0 };
@@ -2952,11 +2946,11 @@ impl TerminalView {
                                     .gap(px(tab_colors::TAB_COLOR_SWATCH_GAP))
                                     .children(tab_color_swatches),
                             )
-                            // Add Custom Command
+                            // 自定义指令：打开弹窗集中增删改
                             .child({
                                 let tab_id = state.tab_id;
                                 div()
-                                    .id("tab-context-menu-add-command")
+                                    .id("tab-context-menu-custom-commands")
                                     .h(px(row_height))
                                     .px(px(10.0))
                                     .flex()
@@ -2969,44 +2963,13 @@ impl TerminalView {
                                         MouseButton::Left,
                                         cx.listener(
                                             move |view, _event: &MouseDownEvent, _window, cx| {
-                                                view.begin_add_tab_command(tab_id, cx);
+                                                view.begin_edit_tab_commands(tab_id, cx);
                                                 cx.stop_propagation();
                                             },
                                         ),
                                     )
-                                    .child(t!("Add Custom Command"))
+                                    .child(t!("Custom Commands"))
                             })
-                            // 已有的自定义指令：点击即删除
-                            .children(tab_commands.iter().enumerate().map(|(index, command)| {
-                                let tab_id = state.tab_id;
-                                div()
-                                    .id(("tab-context-menu-remove-command", index))
-                                    .h(px(row_height))
-                                    .px(px(10.0))
-                                    .flex()
-                                    .items_center()
-                                    .overflow_hidden()
-                                    .whitespace_nowrap()
-                                    .text_ellipsis()
-                                    .text_size(px(13.0))
-                                    .text_color(text_disabled)
-                                    .cursor_pointer()
-                                    .hover(|style| style.bg(hover_bg))
-                                    .on_mouse_down(
-                                        MouseButton::Left,
-                                        cx.listener(
-                                            move |view, _event: &MouseDownEvent, _window, cx| {
-                                                view.remove_tab_command(tab_id, index, cx);
-                                                let _ = view.close_tab_context_menu(cx);
-                                                cx.stop_propagation();
-                                            },
-                                        ),
-                                    )
-                                    .child(t!(
-                                        "Remove Command: {name}",
-                                        name = command.name.clone()
-                                    ))
-                            }))
                             // Pin/Unpin Tab
                             .child(
                                 div()
@@ -3175,9 +3138,7 @@ impl TerminalView {
             });
         let context_menu_overlay = self.render_terminal_context_menu_overlay(cx);
         let tab_context_menu_overlay = self.render_tab_context_menu_overlay(cx);
-        let custom_command_overlay = self
-            .render_custom_command_dialog(cx)
-            .or_else(|| self.render_var_editor_dialog(cx));
+        let custom_command_overlay = self.render_row_editor_dialog(cx);
         let new_tab_menu_overlay = self.render_new_tab_menu_overlay(cx);
         let toast_overlay = self.render_toast_overlay(&colors, cx);
         let link_preview_overlay = self.render_link_preview_overlay();
@@ -3398,8 +3359,7 @@ impl Render for TerminalView {
             && !release_notes_open
             && self.renaming_tab.is_none()
             && self.renaming_workspace.is_none()
-            && self.custom_command_edit.is_none()
-            && self.var_editor.is_none()
+            && self.row_editor.is_none()
             && !self.search_open;
         let cursor_visible = terminal_cursor_active
             && self.cursor_visible_for_focus(self.focus_handle.is_focused(window));

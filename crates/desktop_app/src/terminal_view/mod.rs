@@ -1536,14 +1536,8 @@ pub struct TerminalView {
     tab_colors: HashMap<TabId, tab_colors::TabColor>,
     /// 标签 id -> 自定义指令列表（显示在该标签各窗格的右上角菜单里）。
     tab_commands: HashMap<TabId, Vec<termy_core::session_model::StoredTabCommand>>,
-    /// 正在编辑的“新增自定义指令”对话框状态。
-    custom_command_edit: Option<custom_commands::CustomCommandEdit>,
-    /// 正在编辑窗格变量的“变量编辑”窗口状态。
-    var_editor: Option<custom_commands::VarEditor>,
-    /// 自定义指令对话框的名字输入。
-    custom_command_name_input: InlineInputState,
-    /// 自定义指令对话框的指令输入。
-    custom_command_text_input: InlineInputState,
+    /// 正在编辑的“自定义指令 / 窗格变量”行编辑窗口状态。
+    row_editor: Option<custom_commands::RowEditor>,
     hovered_pane_divider: Option<HoveredPaneDivider>,
     pane_resize_blocked: bool,
     terminal_scrollbar_marker_cache: TerminalScrollbarMarkerCache,
@@ -3212,8 +3206,7 @@ impl TerminalView {
                                 && !view.is_command_palette_open()
                                 && view.renaming_tab.is_none()
                                 && view.renaming_workspace.is_none()
-                                && view.custom_command_edit.is_none()
-                                && view.var_editor.is_none()
+                                && view.row_editor.is_none()
                             {
                                 cx.notify();
                             }
@@ -3494,10 +3487,7 @@ impl TerminalView {
             shortcuts_scroll: ScrollHandle::new(),
             tab_colors: HashMap::new(),
             tab_commands: HashMap::new(),
-            custom_command_edit: None,
-            var_editor: None,
-            custom_command_name_input: InlineInputState::new(String::new()),
-            custom_command_text_input: InlineInputState::new(String::new()),
+            row_editor: None,
             hovered_pane_divider: None,
             pane_resize_blocked: false,
             terminal_scrollbar_marker_cache: TerminalScrollbarMarkerCache::default(),
