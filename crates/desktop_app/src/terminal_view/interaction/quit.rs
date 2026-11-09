@@ -92,15 +92,6 @@ impl TerminalView {
                 self.request_application_quit(window, cx);
                 true
             }
-            CommandAction::QuitKillAll => {
-                // 先落盘工作区布局，再杀掉全部子进程与常驻 host，最后直接退出（不再弹确认）。
-                self.sync_persisted_native_workspace();
-                let killed = crate::process_kill::kill_all_other_processes();
-                log::info!("quit and kill all tasks: terminated {killed} processes");
-                self.allow_quit_without_prompt = true;
-                cx.quit();
-                true
-            }
             CommandAction::RestartApp => {
                 match self.restart_application_with_persist() {
                     Ok(()) => {
@@ -116,6 +107,48 @@ impl TerminalView {
             }
             _ => false,
         }
+    }
+
+    /// 收集标签页内各窗格 shell 的进程 ID（tmux 窗格没有本地进程，会被跳过）。
+    fn tab_shell_pids(tab: &TerminalTab) -> Vec<u32> {
+        tab.panes
+            .iter()
+            .filter_map(|pane| pane.terminal().child_pid())
+            .collect()
+    }
+
+    /// 终止指定标签页里正在运行的任务（shell 的全部后代进程），shell 与标签页保留。
+    pub(in super::super) fn kill_tab_tasks(&mut self, tab_id: TabId, cx: &mut Context<Self>) {
+        let pids = self
+            .tab_index_by_id(tab_id)
+            .and_then(|index| self.session.tabs.get(index))
+            .map(Self::tab_shell_pids)
+            .unwrap_or_default();
+        self.finish_kill_tasks(&pids, cx);
+    }
+
+    /// 终止全部工作区、全部标签页里正在运行的任务，shell 与标签页保留。
+    pub(in super::super) fn kill_all_tasks(&mut self, cx: &mut Context<Self>) {
+        let active = self.session.active_workspace;
+        let mut pids = self
+            .session
+            .tabs
+            .iter()
+            .flat_map(Self::tab_shell_pids)
+            .collect::<Vec<_>>();
+        for (index, workspace) in self.session.workspaces.iter().enumerate() {
+            if index != active {
+                pids.extend(workspace.tabs.iter().flat_map(Self::tab_shell_pids));
+            }
+        }
+        self.finish_kill_tasks(&pids, cx);
+    }
+
+    /// 执行终止并弹出结果提示。
+    fn finish_kill_tasks(&mut self, shell_pids: &[u32], cx: &mut Context<Self>) {
+        let count = crate::process_kill::kill_descendants_of(shell_pids);
+        crate::ui::toast::info(t!("Terminated {count} processes", count = count));
+        self.notify_overlay(cx);
     }
 
     pub(in super::super) fn restart_application_with_persist(&self) -> Result<(), String> {

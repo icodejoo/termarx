@@ -2704,7 +2704,7 @@ impl TerminalView {
                 .cloned()
                 .unwrap_or_default();
             let content_height = (row_height
-                * (5 + plugin_commands.len() + tab_commands.len()) as f32)
+                * (6 + plugin_commands.len() + tab_commands.len()) as f32)
                 + 8.0
                 + tab_colors::TAB_COLOR_MENU_HEIGHT
                 + if plugin_commands.is_empty() { 0.0 } else { 7.0 };
@@ -3035,6 +3035,31 @@ impl TerminalView {
                                     )
                                     .child(pin_label),
                             )
+                            // 终止当前标签页任务
+                            .child({
+                                let tab_id = state.tab_id;
+                                div()
+                                    .id("tab-context-menu-kill-tasks")
+                                    .h(px(row_height))
+                                    .px(px(10.0))
+                                    .flex()
+                                    .items_center()
+                                    .text_size(px(13.0))
+                                    .text_color(text_active)
+                                    .cursor_pointer()
+                                    .hover(|style| style.bg(hover_bg))
+                                    .on_mouse_down(
+                                        MouseButton::Left,
+                                        cx.listener(
+                                            move |view, _event: &MouseDownEvent, _window, cx| {
+                                                view.kill_tab_tasks(tab_id, cx);
+                                                let _ = view.close_tab_context_menu(cx);
+                                                cx.stop_propagation();
+                                            },
+                                        ),
+                                    )
+                                    .child(t!("Kill Tab Tasks"))
+                            })
                             // Close Tab
                             .child({
                                 let tab_id = state.tab_id;
@@ -4590,7 +4615,7 @@ impl Render for TerminalView {
                     .on_action(cx.listener(Self::handle_zoom_out_action))
                     .on_action(cx.listener(Self::handle_zoom_reset_action))
                     .on_action(cx.listener(Self::handle_quit_action))
-                    .on_action(cx.listener(Self::handle_quit_kill_all_action))
+                    .on_action(cx.listener(Self::handle_kill_all_tasks_action))
                     .on_action(cx.listener(Self::handle_open_search_action))
                     .on_action(cx.listener(Self::handle_close_search_action))
                     .on_action(cx.listener(Self::handle_search_next_action))

@@ -173,8 +173,11 @@ impl TerminalView {
             CommandAction::BrowseReleaseNotes => {
                 self.browse_release_notes_action(cx);
             }
-            CommandAction::Quit | CommandAction::QuitKillAll => {
+            CommandAction::Quit => {
                 self.execute_quit_command_action(action, window, cx);
+            }
+            CommandAction::KillAllTasks => {
+                self.kill_all_tasks(cx);
             }
             CommandAction::ToggleTabBarVisibility => {
                 let next_visibility = if self.should_render_tab_strip_chrome() {
@@ -873,13 +876,13 @@ impl TerminalView {
         self.execute_command_action(CommandAction::Quit, true, window, cx);
     }
 
-    pub(in super::super) fn handle_quit_kill_all_action(
+    pub(in super::super) fn handle_kill_all_tasks_action(
         &mut self,
-        _: &commands::QuitKillAll,
+        _: &commands::KillAllTasks,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.execute_command_action(CommandAction::QuitKillAll, true, window, cx);
+        self.execute_command_action(CommandAction::KillAllTasks, true, window, cx);
     }
 
     pub(in super::super) fn handle_open_search_action(
