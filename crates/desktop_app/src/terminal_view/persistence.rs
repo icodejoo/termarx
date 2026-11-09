@@ -179,9 +179,11 @@ impl TerminalView {
                 || (self.native_layout_autosave && self.current_named_layout.is_some()))
     }
 
-    fn should_persist_last_native_session(&self) -> bool {
-        self.multiplexer.is_none()
-            && self.owns_persisted_session
+    /// 是否把当前会话写入 `workspaces.db` 作为“上次会话”。
+    /// 开着多路复用器时也要写：布局本体只在宿主进程内存里，宿主被安装器结束后，
+    /// 启动只能回退到这份快照。
+    pub(in super::super) fn should_persist_last_native_session(&self) -> bool {
+        self.owns_persisted_session
             && (self.native_tab_persistence || self.workspace_sidebar_enabled)
     }
 
@@ -1289,7 +1291,7 @@ impl TerminalView {
             return None;
         }
         let session = self.collect_stored_session()?;
-        let store = if self.multiplexer.is_none() || self.native_layout_autosave {
+        let store = if self.should_persist_last_native_session() || self.native_layout_autosave {
             Some(self.workspace_store()?)
         } else {
             None

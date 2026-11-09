@@ -153,6 +153,11 @@ fn desktop_client_process(cx: &mut TestAppContext) {
             update(cx, first, |view, _| view.session.tabs[0].panes.len() == 2)
         });
         wait(|| update(cx, first, |view, _| core_text(view).contains("READY:right")));
+        // 开着多路复用器时也要把“上次会话”写进 workspaces.db，供宿主被结束后回退。
+        update(cx, first, |view, _| {
+            assert!(view.multiplexer.is_some());
+            assert!(view.should_persist_last_native_session());
+        });
         update(cx, first, |view, cx| {
             view.active_terminal().unwrap().write_input(b"before\n");
             assert!(view.toggle_pane_zoom(cx));
