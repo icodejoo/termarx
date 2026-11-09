@@ -369,6 +369,7 @@ pub fn do_install(installer_path: &Path) -> Result<InstallOutcome> {
             .context(t!("Failed to launch MSI installer"))?;
         }
         "exe" => {
+            stop_session_host();
             shell_execute_elevated(
                 &installer_path.to_string_lossy(),
                 &windows_exe_installer_parameters(),
@@ -384,6 +385,21 @@ pub fn do_install(installer_path: &Path) -> Result<InstallOutcome> {
     }
 
     Ok(InstallOutcome::InstallerLaunched)
+}
+
+/// 安装前优雅停止常驻的会话宿主（它会在应用退出后继续持有 shell 与 OpenConsole.exe，占用安装目录文件）。
+///
+/// 尽力而为：宿主没在运行或连接失败时直接忽略，交给安装器自己的关闭逻辑兜底。
+#[cfg(target_os = "windows")]
+fn stop_session_host() {
+    let Some(root) = termy_core::config_core::config_path()
+        .and_then(|path| path.parent().map(|dir| dir.join("multiplexer")))
+    else {
+        return;
+    };
+    if let Ok(client) = termy_core::multiplexer::SessionClient::connect(&root) {
+        let _ = client.shutdown();
+    }
 }
 
 #[cfg(target_os = "windows")]

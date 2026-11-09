@@ -85,6 +85,7 @@ const SHORTCUT_SECTIONS: &[ShortcutSection] = &[
             ("Switch Theme", CommandAction::SwitchTheme),
             ("Saved Layouts", CommandAction::ManageSavedLayouts),
             ("Minimize Window", CommandAction::MinimizeWindow),
+            ("Kill All Tasks", CommandAction::KillAllTasks),
             ("Quit", CommandAction::Quit),
         ],
     },

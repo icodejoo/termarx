@@ -77,6 +77,35 @@ Root: HKCR; Subkey: "Drive\shell\TermyOpenTab"; ValueType: string; ValueName: ""
 Root: HKCR; Subkey: "Drive\shell\TermyOpenTab"; ValueType: string; ValueName: "Icon"; ValueData: "{app}\{#MyExeName}"
 Root: HKCR; Subkey: "Drive\shell\TermyOpenTab\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#MyExeName}"" --working-directory ""%V"""
 
+[Code]
+{ 优雅停止常驻的会话宿主（termarx.exe --multiplexer-host）。
+  它在应用退出后仍活着，持有全部 shell 与 OpenConsole.exe，
+  会让“正在使用的应用程序”检测列出一长串占用。旧版本未安装或宿主未运行时静默忽略失败。 }
+procedure StopSessionHost();
+var
+  CliPath: String;
+  ResultCode: Integer;
+begin
+  CliPath := ExpandConstant('{app}\{#MyCliExeName}');
+  if FileExists(CliPath) then
+    Exec(CliPath, 'mux shutdown', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+end;
+
+{ 点击“安装”时、占用检测之前停掉宿主（向导模式）。 }
+function NextButtonClick(CurPageID: Integer): Boolean;
+begin
+  if CurPageID = wpReady then
+    StopSessionHost();
+  Result := True;
+end;
+
+{ 静默安装不经过向导页，这里再兜底停一次；应用自动更新也会先在应用侧停宿主。 }
+function PrepareToInstall(var NeedsRestart: Boolean): String;
+begin
+  StopSessionHost();
+  Result := '';
+end;
+
 [Run]
 Filename: "{app}\{#MyExeName}"; Description: "Launch Termarx"; Flags: nowait postinstall skipifsilent
 ; Silent auto-updates quit Termarx before setup finishes, so relaunch after install.
