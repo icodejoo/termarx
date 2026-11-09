@@ -459,7 +459,7 @@ impl Default for AppConfig {
             tmux_persistence: DEFAULT_TMUX_PERSISTENCE,
             tmux_exclusive: DEFAULT_TMUX_EXCLUSIVE,
             native_tab_persistence: true,
-            native_layout_autosave: false,
+            native_layout_autosave: true,
             native_buffer_persistence: false,
             show_debug_overlay: false,
             tmux_binary: DEFAULT_TMUX_BINARY.to_string(),

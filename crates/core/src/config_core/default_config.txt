@@ -26,7 +26,7 @@ tmux_exclusive = false
 # Restore native tabs and pane splits across app restarts
 native_tab_persistence = true
 # Auto-save changes back into the currently loaded named layout
-native_layout_autosave = false
+native_layout_autosave = true
 # Replay saved buffer text when restoring native layouts
 native_buffer_persistence = false
 # Show FPS, CPU, and memory in the terminal corner
