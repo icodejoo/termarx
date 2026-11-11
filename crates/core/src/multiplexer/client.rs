@@ -7,7 +7,7 @@ use std::{
     path::{Path, PathBuf},
     sync::{
         Arc, Condvar, Mutex,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
     },
     time::Duration,
 };
@@ -121,22 +121,6 @@ impl SessionClient {
         wakeup: Option<TerminalWakeupNotifier>,
     ) -> anyhow::Result<Terminal> {
         validate_state(&state)?;
-        let rpc = Connection::connect(&self.root)?;
-        let input = Connection::connect(&self.root)?;
-        let (mut stream, capabilities) = discovery::connect_with_capabilities(&self.root)?;
-        let subscription = if capabilities.graphics_stream {
-            Request::SubscribeGraphics(id.to_owned())
-        } else {
-            Request::Subscribe(id.to_owned())
-        };
-        write_message(&mut stream, &subscription)?;
-        ensure!(
-            matches!(read_message(&mut stream)?, Response::Ok),
-            "cannot subscribe to terminal session"
-        );
-        stream.set_read_timeout(None)?;
-        let close_stream = stream.try_clone()?;
-        let (input_tx, input_rx) = flume::bounded(256);
         let mut initial_state = (*state).clone();
         // Painting reads a completed local snapshot, even before the first
         // graphics update arrives. It must never make a synchronous image RPC.
@@ -149,87 +133,15 @@ impl SessionClient {
             wakeup_enabled: AtomicBool::new(true),
             disconnected: AtomicBool::new(false),
             closing: AtomicBool::new(false),
+            generation: AtomicU64::new(0),
         });
-        let reader_shared = Arc::clone(&shared);
-        let legacy_graphics = if capabilities.graphics_stream {
-            None
-        } else {
-            Some(Connection::connect(&self.root)?)
-        };
-        let reader_pane_id = id.to_owned();
-        std::thread::Builder::new()
-            .name("termy-session-read".into())
-            .spawn(move || {
-                let mut graphics = graphics::GraphicsDecoder::default();
-                let mut legacy_cache = LegacyGraphicsCache::default();
-                let result = (|| -> anyhow::Result<()> {
-                    loop {
-                        match read_message(&mut stream)? {
-                            Update::State(mut state) => {
-                                validate_state(&state)?;
-                                let connection = legacy_graphics
-                                    .as_ref()
-                                    .context("unexpected legacy terminal update")?;
-                                legacy_cache.update(
-                                    Arc::make_mut(&mut state),
-                                    || match connection.request(Request::Command {
-                                        pane: reader_pane_id.clone(),
-                                        command: RemoteCommand::Graphics,
-                                    })? {
-                                        Response::Reply(RemoteReply::Graphics(
-                                            revision,
-                                            placements,
-                                        )) => Ok((revision, placements)),
-                                        _ => bail!("invalid terminal graphics response"),
-                                    },
-                                )?;
-                                reader_shared.publish_state(state);
-                            }
-                            Update::GraphicsState(mut state, update) => {
-                                validate_state(&state)?;
-                                Arc::make_mut(&mut state).graphics = Some(graphics.decode(update)?);
-                                reader_shared.publish_state(state);
-                            }
-                            Update::Events(events) => {
-                                let mut pending = reader_shared.pending.lock().unwrap();
-                                push_pending_events(&mut pending.events, events);
-                            }
-                            Update::Host { id, request } => reader_shared
-                                .pending
-                                .lock()
-                                .unwrap()
-                                .hosts
-                                .push((id, request)),
-                        }
-                        reader_shared.notify();
-                    }
-                })();
-                if let Err(error) = result {
-                    reader_shared.fail(&error);
-                }
-            })?;
-        let input_shared = Arc::clone(&shared);
-        let pane_id = id.to_owned();
-        std::thread::Builder::new()
-            .name("termy-session-input".into())
-            .spawn(move || {
-                while let Ok(command) = input_rx.recv() {
-                    if let Err(error) = input.request(Request::Command {
-                        pane: pane_id.clone(),
-                        command,
-                    }) {
-                        input_shared.fail(&error);
-                        break;
-                    }
-                }
-            })?;
+        let link = open_link(&self.root, id, &shared, 0, false)?;
         Ok(Terminal::from_remote(Arc::new(ClientTerminal {
             id: id.to_owned(),
-            rpc,
+            root: self.root.clone(),
             host: Arc::clone(&self.connection),
             shared,
-            input: input_tx,
-            close_stream,
+            link: Mutex::new(link),
         })))
     }
 
@@ -319,6 +231,134 @@ struct Pending {
     hosts: Vec<(u64, RemoteHostRequest)>,
 }
 
+/// 一条订阅链路：RPC 连接、输入队列与订阅流；重新订阅时整体替换。
+struct Link {
+    /// 本链路的代数；只有与 `ClientState::generation` 一致的链路才能标记断连。
+    generation: u64,
+    rpc: Arc<Connection>,
+    input: Sender<RemoteCommand>,
+    close_stream: TcpStream,
+}
+
+/// 建立一条订阅链路并启动读、输入两个线程。
+///
+/// 握手成功后才把 `shared.generation` 切到 `generation`，此后旧链路线程的失败与迟到的更新都会被忽略。
+/// `reset_pending` 为 `true`（重新订阅）时同时清掉本地待处理事件并复位断连标记，
+/// 因为宿主会在新订阅里重发粘性事件与最新屏幕，旧队列只会造成重复或乱序。
+fn open_link(
+    root: &Path,
+    id: &str,
+    shared: &Arc<ClientState>,
+    generation: u64,
+    reset_pending: bool,
+) -> anyhow::Result<Link> {
+    let rpc = Connection::connect(root)?;
+    let input = Connection::connect(root)?;
+    let (mut stream, capabilities) = discovery::connect_with_capabilities(root)?;
+    let subscription = if capabilities.graphics_stream {
+        Request::SubscribeGraphics(id.to_owned())
+    } else {
+        Request::Subscribe(id.to_owned())
+    };
+    write_message(&mut stream, &subscription)?;
+    ensure!(
+        matches!(read_message(&mut stream)?, Response::Ok),
+        "cannot subscribe to terminal session"
+    );
+    stream.set_read_timeout(None)?;
+    let close_stream = stream.try_clone()?;
+    let (input_tx, input_rx) = flume::bounded(256);
+    let legacy_graphics = if capabilities.graphics_stream {
+        None
+    } else {
+        Some(Connection::connect(root)?)
+    };
+    shared.generation.store(generation, Ordering::Release);
+    if reset_pending {
+        let mut pending = shared.pending.lock().unwrap();
+        pending.events.clear();
+        pending.hosts.clear();
+        shared.disconnected.store(false, Ordering::Release);
+    }
+    let reader_shared = Arc::clone(shared);
+    let reader_pane_id = id.to_owned();
+    std::thread::Builder::new()
+        .name("termy-session-read".into())
+        .spawn(move || {
+            let mut graphics = graphics::GraphicsDecoder::default();
+            let mut legacy_cache = LegacyGraphicsCache::default();
+            let result = (|| -> anyhow::Result<()> {
+                loop {
+                    let update = read_message(&mut stream)?;
+                    // 已被新链路取代：丢弃迟到的更新，静默退出。
+                    if reader_shared.generation.load(Ordering::Acquire) != generation {
+                        return Ok(());
+                    }
+                    match update {
+                        Update::State(mut state) => {
+                            validate_state(&state)?;
+                            let connection = legacy_graphics
+                                .as_ref()
+                                .context("unexpected legacy terminal update")?;
+                            legacy_cache.update(Arc::make_mut(&mut state), || {
+                                match connection.request(Request::Command {
+                                    pane: reader_pane_id.clone(),
+                                    command: RemoteCommand::Graphics,
+                                })? {
+                                    Response::Reply(RemoteReply::Graphics(revision, placements)) => {
+                                        Ok((revision, placements))
+                                    }
+                                    _ => bail!("invalid terminal graphics response"),
+                                }
+                            })?;
+                            reader_shared.publish_state(state);
+                        }
+                        Update::GraphicsState(mut state, update) => {
+                            validate_state(&state)?;
+                            Arc::make_mut(&mut state).graphics = Some(graphics.decode(update)?);
+                            reader_shared.publish_state(state);
+                        }
+                        Update::Events(events) => {
+                            let mut pending = reader_shared.pending.lock().unwrap();
+                            push_pending_events(&mut pending.events, events);
+                        }
+                        Update::Host { id, request } => reader_shared
+                            .pending
+                            .lock()
+                            .unwrap()
+                            .hosts
+                            .push((id, request)),
+                    }
+                    reader_shared.notify();
+                }
+            })();
+            if let Err(error) = result {
+                reader_shared.fail_link(generation, &error);
+            }
+        })?;
+    let input_shared = Arc::clone(shared);
+    let pane_id = id.to_owned();
+    std::thread::Builder::new()
+        .name("termy-session-input".into())
+        .spawn(move || {
+            while let Ok(command) = input_rx.recv() {
+                if let Err(error) = input.request(Request::Command {
+                    pane: pane_id.clone(),
+                    command,
+                }) {
+                    input_shared.fail_link(generation, &error);
+                    break;
+                }
+            }
+        })?;
+    Ok(Link {
+        generation,
+        rpc: Arc::new(rpc),
+        input: input_tx,
+        close_stream,
+    })
+}
+
 /// 客户端待消费事件队列的上限；后台窗格没人取事件时靠它兜底，防止无限增长。
 const MAX_PENDING_EVENTS: usize = 1024;
 
@@ -355,6 +395,8 @@ struct ClientState {
     wakeup_enabled: AtomicBool,
     disconnected: AtomicBool,
     closing: AtomicBool,
+    /// 当前有效链路的代数；重新订阅时递增，旧链路的失败据此被忽略。
+    generation: AtomicU64,
 }
 
 impl ClientState {
@@ -394,6 +436,12 @@ impl ClientState {
             wakeup.notify();
         }
     }
+    /// 仅当 `generation` 仍是当前链路时才标记断连；被新链路取代的旧链路出错不算数。
+    fn fail_link(&self, generation: u64, error: &anyhow::Error) {
+        if self.generation.load(Ordering::Acquire) == generation {
+            self.fail(error);
+        }
+    }
     fn fail(&self, error: &anyhow::Error) {
         if self.closing.load(Ordering::Acquire) || self.disconnected.swap(true, Ordering::AcqRel) {
             return;
@@ -416,17 +464,19 @@ impl ClientState {
 
 struct ClientTerminal {
     id: String,
-    rpc: Connection,
+    root: PathBuf,
     host: Arc<Connection>,
     shared: Arc<ClientState>,
-    input: Sender<RemoteCommand>,
-    close_stream: TcpStream,
+    /// 当前订阅链路；`reconnect` 时整体替换。
+    link: Mutex<Link>,
 }
 
 impl Drop for ClientTerminal {
     fn drop(&mut self) {
         self.shared.closing.store(true, Ordering::Release);
-        let _ = self.close_stream.shutdown(Shutdown::Both);
+        if let Ok(link) = self.link.get_mut() {
+            let _ = link.close_stream.shutdown(Shutdown::Both);
+        }
     }
 }
 
@@ -441,7 +491,11 @@ impl RemoteTransport for ClientTerminal {
                 | RemoteCommand::ScrollToBottom
                 | RemoteCommand::ClearScrollback
         );
-        match self.rpc.request(Request::Command {
+        let (rpc, generation) = {
+            let link = self.link.lock().unwrap();
+            (Arc::clone(&link.rpc), link.generation)
+        };
+        match rpc.request(Request::Command {
             pane: self.id.clone(),
             command,
         }) {
@@ -453,7 +507,7 @@ impl RemoteTransport for ClientTerminal {
                     // record the old offset during the 16ms frame interval.
                     let result = (|| {
                         let Response::Attached(_, state) =
-                            self.rpc.request(Request::Attach(self.id.clone()))?
+                            rpc.request(Request::Attach(self.id.clone()))?
                         else {
                             bail!("invalid terminal refresh response");
                         };
@@ -461,7 +515,7 @@ impl RemoteTransport for ClientTerminal {
                             .wait_for_generation(state.render.metadata.generation)
                     })();
                     if let Err(error) = result {
-                        self.shared.fail(&error);
+                        self.shared.fail_link(generation, &error);
                         return Err(error);
                     }
                 }
@@ -469,7 +523,7 @@ impl RemoteTransport for ClientTerminal {
             }
             Ok(_) => bail!("invalid terminal response"),
             Err(error) => {
-                self.shared.fail(&error);
+                self.shared.fail_link(generation, &error);
                 Err(error)
             }
         }
@@ -478,8 +532,13 @@ impl RemoteTransport for ClientTerminal {
         if self.shared.disconnected.load(Ordering::Acquire) {
             return;
         }
-        if let Err(error) = self.input.send_timeout(command, Duration::from_millis(100)) {
-            self.shared.fail(&anyhow::anyhow!(error.to_string()));
+        let (input, generation) = {
+            let link = self.link.lock().unwrap();
+            (link.input.clone(), link.generation)
+        };
+        if let Err(error) = input.send_timeout(command, Duration::from_millis(100)) {
+            self.shared
+                .fail_link(generation, &anyhow::anyhow!(error.to_string()));
         }
     }
     fn take_events(&self) -> Vec<TerminalEvent> {
@@ -512,6 +571,19 @@ impl RemoteTransport for ClientTerminal {
             self.shared.notify();
         }
     }
+    fn reconnect(&self) -> anyhow::Result<()> {
+        let generation = self.shared.generation.load(Ordering::Acquire) + 1;
+        // 新链路握手失败时旧链路原样保留，调用方可以提示用户改走"强制结束任务"。
+        let link = open_link(&self.root, &self.id, &self.shared, generation, true)?;
+        let old = std::mem::replace(&mut *self.link.lock().unwrap(), link);
+        let _ = old.close_stream.shutdown(Shutdown::Both);
+        self.shared.pending.lock().unwrap().wakeup = true;
+        self.shared.notify();
+        Ok(())
+    }
+    fn is_disconnected(&self) -> bool {
+        self.shared.disconnected.load(Ordering::Acquire)
+    }
 }
 
 #[cfg(test)]
@@ -524,6 +596,30 @@ mod tests {
         let titles = (0..5000).map(|i| TerminalEvent::Title(format!("spin {i}")));
         push_pending_events(&mut queue, titles.collect());
         assert!(matches!(queue.as_slice(), [TerminalEvent::Title(t)] if t == "spin 4999"));
+    }
+
+    /// 构造一个不带唤醒回调的最小 `ClientState`，用于验证断连代数逻辑。
+    fn bare_state(generation: u64) -> ClientState {
+        let terminal = Terminal::new_display(TerminalSize::default(), None);
+        ClientState {
+            state: Mutex::new(Arc::new(RemoteState::capture(&terminal))),
+            state_updated: Condvar::new(),
+            pending: Mutex::new(Pending::default()),
+            wakeup: None,
+            wakeup_enabled: AtomicBool::new(true),
+            disconnected: AtomicBool::new(false),
+            closing: AtomicBool::new(false),
+            generation: AtomicU64::new(generation),
+        }
+    }
+
+    #[test]
+    fn stale_link_failure_does_not_disconnect_the_new_link() {
+        let state = bare_state(2);
+        state.fail_link(1, &anyhow::anyhow!("old link closed"));
+        assert!(!state.disconnected.load(Ordering::Acquire));
+        state.fail_link(2, &anyhow::anyhow!("current link lost"));
+        assert!(state.disconnected.load(Ordering::Acquire));
     }
 
     #[test]

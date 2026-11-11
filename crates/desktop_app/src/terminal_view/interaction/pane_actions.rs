@@ -31,6 +31,8 @@ impl TerminalView {
     ///
     /// 同时软复位鼠标/焦点上报（保留 TUI 界面）：前台程序被中断后不会发关闭序列，残留模式会让鼠标一动就乱码。
     pub(in crate::terminal_view) fn interrupt_pane_task(&self, pane_id: &str) -> bool {
+        // 订阅链路断开时输入会被直接丢弃，先尽力接回来
+        self.resubscribe_if_disconnected(pane_id);
         let sent = self.send_input_to_pane(pane_id, INTERRUPT_BYTE);
         self.reset_pane_input_modes(pane_id, false);
         sent
@@ -52,11 +54,49 @@ impl TerminalView {
         true
     }
 
+    /// 重新订阅指定窗格（会话宿主里的 shell 与屏幕不受影响）。
+    ///
+    /// - `notify`：为 `true` 时用 toast 告知结果（菜单手动触发）；为 `false` 时只在失败时提示。
+    ///
+    /// 返回值：窗格存在且重新订阅成功；失败时提示用户改用"强制结束任务"回到命令行。
+    /// 握手是几次本机回环连接，宿主无响应时最多阻塞数秒，只在用户主动操作或窗格已断开时调用。
+    pub(in crate::terminal_view) fn resubscribe_pane(&self, pane_id: &str, notify: bool) -> bool {
+        let Some(terminal) = self.pane_terminal_by_id(pane_id) else {
+            return false;
+        };
+        match terminal.reconnect() {
+            Ok(()) => {
+                if notify {
+                    crate::ui::toast::success(t!("Pane resubscribed"));
+                }
+                true
+            }
+            Err(error) => {
+                log::error!("resubscribe pane {pane_id} failed: {error:#}");
+                crate::ui::toast::error(t!(
+                    "Cannot resubscribe the pane. Use Force Stop Task to return to the shell"
+                ));
+                false
+            }
+        }
+    }
+
+    /// 窗格订阅已断开时尝试接回；未断开则什么都不做。返回值：调用后窗格是否处于可用状态。
+    fn resubscribe_if_disconnected(&self, pane_id: &str) -> bool {
+        match self.pane_terminal_by_id(pane_id) {
+            Some(terminal) if terminal.is_disconnected() => self.resubscribe_pane(pane_id, false),
+            Some(_) => true,
+            None => false,
+        }
+    }
+
     /// 强制结束指定窗格里 shell 的全部子孙进程（shell 本身和窗格保留）。
     ///
     /// 枚举进程较慢，放到后台线程里做，不阻塞界面。
     /// 返回值：是否拿到了窗格 shell 的 pid；tmux 运行时拿不到，返回 `false`。
     pub(in crate::terminal_view) fn force_stop_pane_task(&self, pane_id: &str) -> bool {
+        // 窗格可能已与宿主断开：先接回订阅，否则下面的复位和之后的提示符都到不了界面
+        self.resubscribe_if_disconnected(pane_id);
         // 进程可能早就没了，先硬复位终端状态（含退出备用屏幕），保证按钮一定有效果
         self.reset_pane_input_modes(pane_id, true);
         let Some(shell_pid) = self

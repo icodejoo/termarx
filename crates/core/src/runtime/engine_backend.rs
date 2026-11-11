@@ -224,6 +224,19 @@ impl Backend {
         }
     }
 
+    /// 重新订阅宿主窗格；本地引擎没有订阅链路，直接视为成功。
+    pub(super) fn reconnect(&self) -> anyhow::Result<()> {
+        match self {
+            Self::Remote(backend) => backend.reconnect(),
+            Self::Alacritty(_) | Self::Tmon(_) => Ok(()),
+        }
+    }
+
+    /// 订阅链路是否已断开；只有多路复用器的远程后端会为 `true`。
+    pub(super) fn is_disconnected(&self) -> bool {
+        matches!(self, Self::Remote(backend) if backend.is_disconnected())
+    }
+
     pub(super) fn set_wakeup_enabled(&self, enabled: bool) {
         match self {
             Self::Alacritty(backend) => backend.set_wakeup_enabled(enabled),

@@ -290,6 +290,12 @@ pub(super) const ENTRIES: &[(&str, &str)] = &[
     ("Stop Task", "停止任务"),
     ("Force Stop Task", "强制结束任务"),
     ("Reset Terminal Input Modes", "重置终端输入状态"),
+    ("Resubscribe Pane", "重新订阅"),
+    ("Pane resubscribed", "已重新订阅窗格"),
+    (
+        "Cannot resubscribe the pane. Use Force Stop Task to return to the shell",
+        "无法重新订阅，请用“强制结束任务”回到命令行",
+    ),
     (
         "Input modes stale, click to reset",
         "输入状态残留，点击重置",

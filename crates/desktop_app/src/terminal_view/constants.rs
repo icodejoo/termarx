@@ -134,8 +134,8 @@ pub(super) const PANE_TITLE_PATH_ALPHA: f32 = 0.55;
 pub(super) const PANE_TITLE_CHAR_WIDTH_RATIO: f32 = 0.6;
 /// 窗格标题栏右端下拉按钮的宽度（按钮高度同标题栏）。
 pub(super) const PANE_MENU_BUTTON_WIDTH: f32 = 18.0;
-/// 窗格菜单新增的操作行数：复制目录/分支 2 + 停止任务/复位 3 + 变量编辑 1 + 移动窗格 4。
-pub(super) const PANE_MENU_ACTION_ROWS: f32 = 10.0;
+/// 窗格菜单新增的操作行数：复制目录/分支 2 + 停止任务/复位/重新订阅 4 + 变量编辑 1 + 移动窗格 4。
+pub(super) const PANE_MENU_ACTION_ROWS: f32 = 11.0;
 /// 窗格菜单行高（紧凑）。
 pub(super) const PANE_MENU_ROW_HEIGHT: f32 = 22.0;
 /// 窗格菜单文字字号。

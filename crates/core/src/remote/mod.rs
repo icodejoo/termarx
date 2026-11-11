@@ -151,6 +151,15 @@ pub trait RemoteTransport: Send + Sync {
     fn reply_to_host(&self, id: u64, reply: RemoteHostReply);
     fn has_pending_events(&self) -> bool;
     fn set_wakeup_enabled(&self, enabled: bool);
+    /// 重新建立到宿主的订阅链路并清空本地待处理事件；宿主会重发最新屏幕快照与粘性事件。
+    /// 无需订阅的传输默认视为成功。
+    fn reconnect(&self) -> anyhow::Result<()> {
+        Ok(())
+    }
+    /// 订阅链路是否已断开（读线程出错退出等）；断开后输入、滚动都会失效，默认 `false`。
+    fn is_disconnected(&self) -> bool {
+        false
+    }
 }
 
 /// Execute a client operation against the authoritative terminal. No output

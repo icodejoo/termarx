@@ -2033,6 +2033,7 @@ impl TerminalView {
                     t!("Copy Current Directory Path"),
                     t!("Copy Current Branch Name"),
                     t!("Reset Terminal Input Modes"),
+                    t!("Resubscribe Pane"),
                     t!("Force Stop Task"),
                     t!("Edit Variables"),
                     t!("Move Pane Right"),
@@ -2442,6 +2443,12 @@ impl TerminalView {
                                         t!("Reset Terminal Input Modes"),
                                         true,
                                         PaneMenuAction::ResetTerminal,
+                                    ))
+                                    .child(pane_action_item(
+                                        "terminal-context-menu-resubscribe",
+                                        t!("Resubscribe Pane"),
+                                        true,
+                                        PaneMenuAction::Resubscribe,
                                     ))
                                     .child(divider())
                                     .child(pane_action_item(

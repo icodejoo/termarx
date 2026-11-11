@@ -115,6 +115,15 @@ impl RemoteBackend {
     pub(crate) fn set_wakeup_enabled(&self, enabled: bool) {
         self.transport.set_wakeup_enabled(enabled);
     }
+    /// 重新订阅宿主窗格；成功后丢弃上一帧缓存，让下一帧按全量重绘。
+    pub(crate) fn reconnect(&self) -> anyhow::Result<()> {
+        self.transport.reconnect()?;
+        *self.last_render.lock().unwrap() = None;
+        Ok(())
+    }
+    pub(crate) fn is_disconnected(&self) -> bool {
+        self.transport.is_disconnected()
+    }
     pub(crate) fn set_term_options(&self, options: TerminalOptions) {
         self.transport.send(RemoteCommand::SetOptions(options));
     }

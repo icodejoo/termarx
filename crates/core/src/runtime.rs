@@ -2511,6 +2511,19 @@ impl Terminal {
         self.backend.set_wakeup_enabled(enabled);
     }
 
+    /// 重新订阅会话宿主里的窗格，用于订阅链路断开后的挽救。
+    ///
+    /// 成功后本地待处理事件被清空，宿主会重发最新屏幕与标题等粘性事件。
+    /// 本地终端（非多路复用器）无需订阅，恒返回 `Ok(())`。
+    pub fn reconnect(&self) -> anyhow::Result<()> {
+        self.backend.reconnect()
+    }
+
+    /// 订阅链路是否已断开（此时输入、滚动无效，画面停在最后一帧）；本地终端恒为 `false`。
+    pub fn is_disconnected(&self) -> bool {
+        self.backend.is_disconnected()
+    }
+
     pub fn write(&self, input: &[u8]) {
         self.backend.write(input);
     }

@@ -28,6 +28,8 @@ pub(in crate::terminal_view) enum PaneMenuAction {
     ForceStop,
     /// 复位鼠标/焦点上报（保留 TUI 界面），不动进程。
     ResetTerminal,
+    /// 重新订阅宿主里的窗格，用于连接断开后的挽救。
+    Resubscribe,
     /// 和指定方向的相邻窗格交换位置。
     Move(NativeFocusDirection),
     /// 执行所属标签的第 N 条自定义指令。
@@ -410,6 +412,9 @@ impl TerminalView {
             }
             PaneMenuAction::ResetTerminal => {
                 self.reset_pane_input_modes(pane_id.as_str(), false);
+            }
+            PaneMenuAction::Resubscribe => {
+                self.resubscribe_pane(pane_id.as_str(), true);
             }
             PaneMenuAction::Move(direction) => {
                 self.move_pane_in_direction(pane_id.as_str(), direction, cx);

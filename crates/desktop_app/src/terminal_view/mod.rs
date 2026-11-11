@@ -646,6 +646,27 @@ impl Terminal {
         }
     }
 
+    /// 重新订阅会话宿主里的窗格；tmux 运行时没有订阅链路，视为成功。
+    fn reconnect(&self) -> anyhow::Result<()> {
+        match self {
+            Self::Native(terminal) => terminal
+                .lock()
+                .map_err(|_| anyhow::anyhow!("terminal lock poisoned"))?
+                .reconnect(),
+            Self::Tmux(_) => Ok(()),
+        }
+    }
+
+    /// 订阅链路是否已断开（画面停在最后一帧、输入无效）；tmux 运行时恒为 `false`。
+    fn is_disconnected(&self) -> bool {
+        match self {
+            Self::Native(terminal) => terminal
+                .lock()
+                .is_ok_and(|terminal| terminal.is_disconnected()),
+            Self::Tmux(_) => false,
+        }
+    }
+
     /// 普通屏幕下是否残留鼠标/焦点上报（乱码的典型来源）；tmux 运行时恒为 `false`。
     fn has_stale_input_report_modes(&self) -> bool {
         match self {
