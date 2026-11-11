@@ -192,11 +192,7 @@ impl SessionClient {
                             }
                             Update::Events(events) => {
                                 let mut pending = reader_shared.pending.lock().unwrap();
-                                ensure!(
-                                    pending.events.len() + events.len() <= 1024,
-                                    "session event queue overflow"
-                                );
-                                pending.events.extend(events);
+                                push_pending_events(&mut pending.events, events);
                             }
                             Update::Host { id, request } => reader_shared
                                 .pending
@@ -321,6 +317,34 @@ struct Pending {
     wakeup: bool,
     events: Vec<TerminalEvent>,
     hosts: Vec<(u64, RemoteHostRequest)>,
+}
+
+/// 客户端待消费事件队列的上限；后台窗格没人取事件时靠它兜底，防止无限增长。
+const MAX_PENDING_EVENTS: usize = 1024;
+
+/// 把宿主推来的事件并入待消费队列，永不因积压而失败。
+///
+/// - 粘性事件（标题、cwd、进度等）只保留每组最新一条；
+/// - 超过 [`MAX_PENDING_EVENTS`] 时丢弃最旧的非 `Exit` 事件，`Exit` 始终保留。
+///
+/// 后台标签的窗格会关闭唤醒、无人取事件，而 claude 会持续刷新标题；
+/// 以前这里溢出即报错，读线程退出后窗格永久断连。
+fn push_pending_events(queue: &mut Vec<TerminalEvent>, incoming: Vec<TerminalEvent>) {
+    for event in incoming {
+        if let Some(key) = super::pane::sticky_key(&event) {
+            queue.retain(|old| super::pane::sticky_key(old) != Some(key));
+        }
+        queue.push(event);
+    }
+    while queue.len() > MAX_PENDING_EVENTS {
+        let Some(index) = queue
+            .iter()
+            .position(|event| !matches!(event, TerminalEvent::Exit))
+        else {
+            break;
+        };
+        queue.remove(index);
+    }
 }
 
 struct ClientState {
@@ -487,5 +511,27 @@ impl RemoteTransport for ClientTerminal {
         if enabled && self.has_pending_events() {
             self.shared.notify();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sticky_events_keep_only_the_latest_per_group() {
+        let mut queue = Vec::new();
+        let titles = (0..5000).map(|i| TerminalEvent::Title(format!("spin {i}")));
+        push_pending_events(&mut queue, titles.collect());
+        assert!(matches!(queue.as_slice(), [TerminalEvent::Title(t)] if t == "spin 4999"));
+    }
+
+    #[test]
+    fn overflow_drops_oldest_events_instead_of_failing() {
+        let mut queue = Vec::new();
+        push_pending_events(&mut queue, vec![TerminalEvent::Exit]);
+        push_pending_events(&mut queue, vec![TerminalEvent::Bell; MAX_PENDING_EVENTS + 10]);
+        assert_eq!(queue.len(), MAX_PENDING_EVENTS);
+        assert!(queue.iter().any(|e| matches!(e, TerminalEvent::Exit)));
     }
 }

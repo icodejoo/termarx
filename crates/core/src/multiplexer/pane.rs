@@ -167,7 +167,9 @@ impl Pane {
     }
 }
 
-fn sticky_key(event: &TerminalEvent) -> Option<u8> {
+/// 返回"粘性"事件的分组键：同组事件只需保留最新一条（标题、cwd、进度、shell 生命周期）；
+/// 非粘性事件（响铃、剪贴板等）返回 `None`，需要逐条保留。
+pub(super) fn sticky_key(event: &TerminalEvent) -> Option<u8> {
     match event {
         TerminalEvent::Title(_) | TerminalEvent::ResetTitle => Some(0),
         TerminalEvent::WorkingDirectory(_) => Some(1),
