@@ -207,8 +207,14 @@ enum PluginCommand {
     },
 }
 
+/// 系统提交量耗尽时先退避重试分配，避免默认的 abort 连带丢掉 host 里所有终端任务。
+#[global_allocator]
+static ALLOCATOR: termy_core::retry_alloc::RetryingAlloc<std::alloc::System> =
+    termy_core::retry_alloc::RetryingAlloc::new(std::alloc::System);
+
 fn main() {
     if std::env::args_os().nth(1).as_deref() == Some(std::ffi::OsStr::new("--multiplexer-host")) {
+        ALLOCATOR.set_patient_mode();
         let result = std::env::args_os()
             .nth(2)
             .ok_or_else(|| anyhow::anyhow!("session directory required"))

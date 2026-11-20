@@ -15,6 +15,7 @@ mod protocol;
 pub mod remote;
 mod render_metrics;
 mod resize_anchor;
+pub mod retry_alloc;
 mod runtime;
 mod search;
 mod shell_integration;

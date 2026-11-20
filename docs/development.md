@@ -14,6 +14,18 @@ Set `TERMY_CRASH_LOG_PATH=/path/to/crash.log` to override the location when
 debugging or collecting a support artifact. Crash reports include the Termy
 version, panic location, panic message, thread name, and a captured backtrace.
 
+## Out-of-memory behaviour
+
+`termarx`, `termarx-cli` and `termarx-session-host` install
+`termy_core::retry_alloc::RetryingAlloc` as the global allocator. When the OS
+refuses an allocation (for example the system commit limit is reached), it
+retries with exponential backoff (10 ms doubling to 500 ms, about 10 s in
+total) before Rust's default abort runs. The multiplexer host switches to
+"patient mode" (`set_patient_mode`, up to about 10 minutes), because its abort
+kills every terminal task. This keeps the host, and the terminals inside it,
+alive through memory spikes. An abort still
+leaves no `crash.log` entry; use the WER dumps in `%LOCALAPPDATA%\CrashDumps`.
+
 ## Render metrics (debug-only)
 
 Enable render churn metrics in debug builds:

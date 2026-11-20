@@ -640,12 +640,18 @@ fn spawn_deeplink_listener(cx: &mut App, deeplink_rx: Receiver<Vec<String>>) {
     .detach();
 }
 
+/// 系统提交量耗尽时先退避重试分配，避免默认的 abort 连带丢掉 host 里所有终端任务。
+#[global_allocator]
+static ALLOCATOR: termy_core::retry_alloc::RetryingAlloc<std::alloc::System> =
+    termy_core::retry_alloc::RetryingAlloc::new(std::alloc::System);
+
 fn main() {
     let cli_args: Vec<String> = std::env::args().skip(1).collect();
     if cli_args
         .first()
         .is_some_and(|arg| arg == "--multiplexer-host")
     {
+        ALLOCATOR.set_patient_mode();
         env_logger::init();
         let result = match cli_args.as_slice() {
             [_, directory] => termy_core::multiplexer::serve(std::path::Path::new(directory)),
